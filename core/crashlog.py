@@ -15,6 +15,8 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+from .dufsbin import resource_dir, verify_assets_dir, webui_dir
+
 MAX_POPUP = 900
 
 
@@ -105,11 +107,25 @@ def install(popup: bool = True) -> None:
         pass
 
 
+def _skin_files(d) -> str:
+    """列出皮肤目录内的文件，自检时用来确认打包是否完整。"""
+    try:
+        if not d or not d.is_dir():
+            return "(无)"
+        return ", ".join(sorted(f.name for f in d.iterdir() if f.is_file())) or "(空)"
+    except OSError as e:
+        return f"(读取失败 {e})"
+
+
 def env_report() -> str:
     """环境快照，用于排错：frozen 状态、_MEIPASS、可执行文件位置、Tcl/Tk 情况。"""
     lines = [
         f"frozen      : {getattr(sys, 'frozen', False)}",
         f"_MEIPASS    : {getattr(sys, '_MEIPASS', '(none)')}",
+        f"webui_dir   : {webui_dir()}",
+        f"resource_dir: {resource_dir()}",
+        f"验证结果    : {verify_assets_dir(webui_dir())[1]}",
+        f"目录内容    : {_skin_files(webui_dir())}",
         f"executable  : {sys.executable}",
         f"argv0       : {sys.argv[0] if sys.argv else '(none)'}",
         f"cwd         : {os.getcwd()}",

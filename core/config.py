@@ -141,7 +141,12 @@ class ServerConfig:
 
     # ---------- 序列化 ----------
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        # 只有"明确关闭"才打标记：表示这是用户当下的选择，
+        # 载入时不要被自愈逻辑改回 True。重新勾选后标记自然消失。
+        if d.get("custom_ui") is False:
+            d["_user_set_custom_ui"] = True
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "ServerConfig":
@@ -150,6 +155,14 @@ class ServerConfig:
         valid = {f.name for f in fields(cls)}
         clean = {k: v for k, v in data.items() if k in valid}
         cfg = cls(**clean)
+        # 自愈：v1.2.1 及更早的"皮肤启动失败自动降级"会把 custom_ui=false 写盘，
+        # 造成"一次失败 = 永久关闭"。降级写盘的行为 v1.2.2 就去掉了，
+        # 但**已经写进用户配置文件的 false 不会自己消失**，
+        # 于是出现"代码和打包都修好了，皮肤却始终不生效"。
+        # 这里在载入时恢复为默认 True，一次性消除历史污染。
+        # 用户之后仍可手动取消勾选 —— 那属于主动选择，会打 _user_set_custom_ui 标记，不再被改写。
+        if clean.get("custom_ui") is False and not data.get("_user_set_custom_ui"):
+            cfg.custom_ui = True
         try:
             cfg.port = int(cfg.port)
         except (TypeError, ValueError):

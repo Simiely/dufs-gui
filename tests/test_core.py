@@ -22,6 +22,7 @@ sys.path.insert(0, str(REPO))
 
 import core as core_pkg  # noqa: E402
 from core import dufsbin, server  # noqa: E402
+from core.dufsbin import verify_assets_dir, webui_dir  # noqa: E402
 from core.config import (AppConfig, ServerConfig, load_config,  # noqa: E402
                          normalize_prefix, save_config)
 from core.netutil import find_free_port, port_in_use  # noqa: E402
@@ -359,20 +360,61 @@ class AssetsDirTest(unittest.TestCase):
             self.skipTest("未找到内置皮肤目录")
         self.assertTrue((d / "index.html").is_file())
 
-    def test_skin_is_self_contained(self):
-        """皮肤必须自包含：不引用任何外部 CSS/JS。
+    def test_skin_is_official_structure(self):
+        """皮肤必须是 dufs 官方 assets 的副本，不能自造前端。
 
-        dufs 的资源前缀占位符写法各版本不一致（__ASSETS_PREFIX__ 与
-        __ASSERTS_PREFIX__ 都存在过），一旦对不上替换就不会发生，
-        外部资源全部 404、页面退回无样式状态。内联可彻底规避。
+        曾自造过一整套 index.html/index.js，等于猜测 dufs 的内部契约
+        （数据节点写法、IndexData 字段、DOM class、权限判定），
+        结果是上传 / 下载 / 预览全部失效，且 dufs 端不报错、极难定位。
+
+        官方方案（README "Customize UI"）：copy dufs's assets directory
+        and modify it accordingly —— 完整搬运，只改 index.css 的变量。
         """
         html = (REPO / "assets" / "index.html").read_text(encoding="utf-8")
-        self.assertNotIn("<link", html)
-        self.assertNotIn("script src", html)
-        self.assertNotIn('href="__', html)
-        self.assertIn("<style>", html)
-        self.assertIn("<script>", html)
-        self.assertIn("__INDEX_DATA__", html)
+        # 官方用 <template id="index-data">，不是 div
+        self.assertIn('<template id="index-data">', html)
+        # 官方引用内置 JS/CSS/favicon
+        self.assertIn("__ASSETS_PREFIX__index.js", html)
+        self.assertIn("__ASSETS_PREFIX__index.css", html)
+        # 占位符唯一
+        self.assertEqual(html.count("__INDEX_DATA__"), 1)
+
+    def test_skin_ships_official_js_and_css(self):
+        """index.html 与 index.js 必须同版本随包提供。
+
+        官方 assets 里 index.css / index.js / favicon.ico 缺失会回退内置版本，
+        但 index.html 必须存在；若只提供自己版本的 HTML 而让 JS 回退内置，
+        HTML 与 JS 版本可能不一致，DOM 对不上同样会功能失效。
+        """
+        a = REPO / "assets"
+        for f in ("index.html", "index.css", "index.js", "favicon.ico",
+                  "ASSETS_VERSION"):
+            self.assertTrue((a / f).is_file(), f"缺少 {f}")
+        css = (a / "index.css").read_text(encoding="utf-8")
+        # 深色皮肤只覆盖官方变量，不改动结构
+        self.assertIn("--bg-primary", css)
+        self.assertIn("DufsGui 深色皮肤", css)
+        # 必须有视觉改造，否则"加载了皮肤"和"官方默认界面"看起来毫无区别，
+        # 用户会合理地认为皮肤没生效
+        self.assertIn("DufsGui 视觉增强", css)
+
+    def test_skin_visual_enhancement_is_real(self):
+        """视觉增强要真的改变观感，不能只是换几个颜色变量。
+
+        判据：存在卡片化表格、圆角、渐变顶条这类结构性样式，
+        而不是仅有一组 :root 变量覆盖。
+        """
+        css = (REPO / "assets" / "index.css").read_text(encoding="utf-8")
+        for feat in ["border-collapse: separate", "border-radius",
+                     "linear-gradient", "backdrop-filter"]:
+            self.assertIn(feat, css, f"视觉增强缺少 {feat}")
+
+    def test_skin_keeps_official_js_untouched(self):
+        """官方 index.js 必须原样保留 —— 交互逻辑全靠它，改坏就全功能失效。"""
+        js = (REPO / "assets" / "index.js").read_text(encoding="utf-8")
+        self.assertIn("document.getElementById('index-data')", js)
+        self.assertIn('XMLHttpRequest', js)
+        self.assertNotIn("DufsGui", js, "不应改动官方 JS")
 
     def test_args_omitted_when_no_index_html(self):
         """即使勾选了美化，目录不含 index.html 时也不能传 --assets。"""
@@ -390,6 +432,187 @@ class AssetsDirTest(unittest.TestCase):
     def test_default_is_on(self):
         """默认启用皮肤：index.html 自包含且必然存在，不会拖垮启动。"""
         self.assertTrue(ServerConfig().custom_ui)
+
+    def test_packaged_skin_resolves_under_meipass(self):
+        """打包后（frozen + _MEIPASS）皮肤必须能定位到。
+
+        这是 v1.2.1 的关键回归：若 PyInstaller 把 assets 打成别的目录名
+        （如 webui/），resource_dir()/'assets'/index.html 就找不到，
+        --assets 静默失效，网页退回 dufs 默认样式。
+        用 monkeypatch 模拟 PyInstaller 的 frozen 环境。
+        """
+        mei = Path(tempfile.mkdtemp(prefix="meipass_sim_"))
+        try:
+            assets = mei / "assets"
+            assets.mkdir()
+            (assets / "index.html").write_text("<html></html>", encoding="utf-8")
+
+            saved_frozen = getattr(sys, "frozen", None)
+            saved_meipass = getattr(sys, "_MEIPASS", None)
+            sys.frozen = True
+            sys._MEIPASS = str(mei)  # type: ignore[attr-defined]
+            try:
+                # 清掉模块级缓存，迫使 resource_dir() 重读 _MEIPASS
+                for _m in ("core.dufsbin", "core.config"):
+                    sys.modules.pop(_m, None)
+                from core import dufsbin as db  # type: ignore[import-not-at-top]
+                found = db.webui_dir()
+                self.assertIsNotNone(found, "打包后未能定位内置皮肤目录")
+                self.assertEqual(found, assets, "皮肤目录应为 _MEIPASS/assets")
+                self.assertTrue((found / "index.html").is_file(),
+                                "打包后 index.html 必须存在，否则 --assets 不生效")
+            finally:
+                if saved_frozen is None:
+                    del sys.frozen
+                else:
+                    sys.frozen = saved_frozen
+                if saved_meipass is None:
+                    del sys._MEIPASS
+                else:
+                    sys._MEIPASS = saved_meipass
+                sys.modules.pop("core.dufsbin", None)
+                sys.modules.pop("core.config", None)
+        finally:
+            import shutil as _sh
+            _sh.rmtree(mei, ignore_errors=True)
+
+
+class ResourceDirTest(unittest.TestCase):
+    """打包资源目录的定位。
+
+    onefile 用 sys._MEIPASS；onedir 没有 _MEIPASS，资源在 exe 所在目录。
+    原实现在 frozen 为真但无 _MEIPASS 时回退到**源码目录**，onedir 下必然找不到皮肤。
+    """
+
+    def _sim(self, frozen, meipass, exe_dir):
+        saved = {k: getattr(sys, k, None) for k in ("frozen", "_MEIPASS")}
+        saved_exe = sys.executable
+        sys.modules.pop("core.dufsbin", None)
+        try:
+            if frozen:
+                sys.frozen = True
+            else:
+                sys.__dict__.pop("frozen", None)
+            if meipass is None:
+                sys.__dict__.pop("_MEIPASS", None)
+            else:
+                sys._MEIPASS = meipass
+            sys.executable = exe_dir
+            from core import dufsbin as db
+            return db.resource_dir()
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    sys.__dict__.pop(k, None)
+                else:
+                    setattr(sys, k, v)
+            sys.executable = saved_exe
+            sys.modules.pop("core.dufsbin", None)
+
+    def test_onedir_falls_back_to_exe_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            exe = os.path.join(d, "DufsGui.exe")
+            Path(exe).write_text("x", encoding="utf-8")
+            got = self._sim(True, None, exe)   # frozen 但无 _MEIPASS = onedir
+            self.assertEqual(got, Path(d), f"onedir 应回退到 exe 目录，实际 {got}")
+
+    def test_onefile_uses_meipass(self):
+        with tempfile.TemporaryDirectory() as d:
+            got = self._sim(True, d, os.path.join(d, "x.exe"))
+            self.assertEqual(got, Path(d))
+
+    def test_dev_uses_project_root(self):
+        got = self._sim(False, None, "/nowhere/x")
+        self.assertTrue((got / "core").is_dir(), f"开发模式应回退项目根，实际 {got}")
+
+
+class AssetsVerifyTest(unittest.TestCase):
+    """verify_assets_dir 必须把"缺 index.html"说清楚，不能静默。"""
+
+    def test_ok(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "index.html").write_text("<html>", encoding="utf-8")
+            ok, msg = verify_assets_dir(d)
+            self.assertTrue(ok)
+            self.assertIn("index.html", msg)
+
+    def test_missing_html_is_explicit(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "index.css").write_text("a{}", encoding="utf-8")
+            ok, msg = verify_assets_dir(d)
+            self.assertFalse(ok)
+            self.assertIn("index.html", msg)
+            self.assertIn("index.css", msg)   # 把现有文件列出来便于排查
+
+    def test_none(self):
+        ok, msg = verify_assets_dir(None)
+        self.assertFalse(ok)
+        self.assertIn("未找到", msg)
+
+    def test_builtin_passes(self):
+        ok, msg = verify_assets_dir(webui_dir())
+        self.assertTrue(ok, f"内置皮肤核验失败：{msg}")
+
+
+class SkinConfigTest(unittest.TestCase):
+    """皮肤开关的持久化行为。
+
+    曾出现的真实 bug：启动失败时"自动降级"把 custom_ui=false 写进 config.json，
+    之后即使代码修好、打包修好，启动时仍从配置读回 false，--assets 永远不加。
+    一次失败 = 永久关闭。
+    """
+
+    def test_polluted_false_is_healed_on_load(self):
+        """历史污染的 false 载入时被自愈为 True。
+
+        v1.2.1 的"降级写盘"把 custom_ui=false 存进了 config.json，
+        之后即使代码与打包都修好，每次启动仍读回 false、--assets 永远不加，
+        表现就是"目录核验通过但皮肤不生效"。
+        """
+        cfg = ServerConfig.from_dict({"custom_ui": False})
+        self.assertTrue(cfg.custom_ui, "历史污染应被自愈为 True")
+        self.assertTrue(ServerConfig().custom_ui)
+
+    def test_user_disabled_is_respected(self):
+        """用户主动取消勾选（带 _user_set_custom_ui 标记）时不得被自愈覆盖。"""
+        cfg = ServerConfig.from_dict(
+            {"custom_ui": False, "_user_set_custom_ui": True})
+        self.assertFalse(cfg.custom_ui, "用户主动关闭必须尊重")
+
+    def test_disabling_writes_marker(self):
+        """主动关闭时要写标记，否则下次启动会被自愈改回，用户的选择丢失。"""
+        d = ServerConfig(custom_ui=False).to_dict()
+        self.assertTrue(d.get("_user_set_custom_ui"))
+        self.assertFalse(ServerConfig.from_dict(d).custom_ui)
+        # 重新勾选后标记消失
+        self.assertNotIn("_user_set_custom_ui",
+                         ServerConfig(custom_ui=True).to_dict())
+
+    def test_assets_arg_follows_custom_ui(self):
+        """--assets 只在 custom_ui 为真时入参 —— 这是"核验通过却不生效"的关键分界。
+
+        目录核验只说明"文件在不在"；真正决定生效与否的是参数有没有进命令行。
+        """
+        self.assertIn("--assets", ServerConfig(share_path=".", custom_ui=True).to_args())
+        self.assertNotIn("--assets", ServerConfig(share_path=".", custom_ui=False).to_args())
+
+    def test_downgrade_must_not_persist(self):
+        """自动降级只允许改内存，不得调用 _save() 写盘。"""
+        src = (REPO / "app.py").read_text(encoding="utf-8")
+        i = src.find("尝试不带自定义网页皮肤重新启动")
+        self.assertGreater(i, 0, "未找到自动降级代码段")
+        seg = src[i:i + 900]
+        code = "\n".join(l for l in seg.splitlines()
+                          if not l.strip().startswith("#"))
+        self.assertNotIn("_save()", code,
+                        "自动降级段内不得调用 _save()，否则一次失败永久关闭皮肤")
+
+    def test_webui_dir_only_looks_at_assets(self):
+        """webui_dir 只认 assets/，不再有 webui/ 死分支。"""
+        src = (REPO / "core" / "dufsbin.py").read_text(encoding="utf-8")
+        # 只禁真实表达式，注释里提到 webui 没关系
+        self.assertNotIn('resource_dir() / "webui"', src)
+        self.assertIn('resource_dir() / "assets"', src)
 
 
 class WaitReadyTest(unittest.TestCase):

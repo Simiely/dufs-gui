@@ -1,6 +1,6 @@
 # AGENTS.md · 项目规则
 
-> 📌 **文档基线**：2026-11-02（commit `e7d3c66`）v1.1.0 版本号收归单一真源
+> 📌 **文档基线**：2026-11-02（commit `c167b97`）v1.2.2 修复皮肤被持久化配置永久关闭
 > **更新文档/代码后，请更新此行**（日期 + 新 commit hash），并在 CHANGELOG 追加版本
 
 ## 技术栈
@@ -20,9 +20,11 @@
 6. **clam 主题的对勾是硬编码深色，且 `indicatorcolor` 会静默失效**（不报错，就是没效果）。
    不要靠配色去调，直接**自绘 16x16 位图 + `element_create` 替换指示器**
    （见 `core/theme.py` 的 `_install_check_indicator`）。自绘图片必须长期持有引用，否则被 GC 后变空白。
-7. **皮肤必须自包含，不要引用外部 CSS/JS**。dufs 的资源前缀占位符写法各版本不一致
-   （`__ASSETS_PREFIX__` 与 `__ASSERTS_PREFIX__` 都出现过），对不上就整体失效且无报错。
-   `assets/index.html` 已把样式与脚本全部内联，改样式直接编辑 `<style>` 块。
+7. **网页皮肤必须用官方 assets，不要自造前端**。曾手写过整套 index.html/index.js，
+   等于猜测 dufs 内部契约（数据节点是 `<template id="index-data">`、IndexData 字段、
+   DOM class、权限判定），结果是上传/下载/预览全失效且 dufs 端不报错。
+   正确做法：完整搬运官方 assets，只覆盖 `index.css` 的 CSS 变量。
+   升级 dufs 后执行 `python tools/fetch_skin.py <版本>` 重新生成。
 8. **`ttk.Label` 不要写死 `wraplength`**。窗口宽度和可用宽度不一致时换行位置会错乱，
    长文本被截得看不懂（等效命令曾显示成 `--e`）。改为 `<Configure>` 里按真实宽度自适应。
 

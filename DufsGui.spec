@@ -54,19 +54,27 @@ else:
     print("[spec] 启动后可在「高级设置 → dufs 程序 → 更换…」手动指定")
 
 datas = []
-# 网页皮肤：三个文件必须齐全，尤其 index.html
+# 网页皮肤：CSS/JS 已内联进 index.html，故只需保证 index.html 存在
 # —— dufs 启动时硬性校验 --assets 目录里必须有 index.html，缺了直接 bail 拒绝启动
-# CSS 与 JS 已内联进 index.html，不再依赖 __ASSETS_PREFIX__ 占位符
-UI_FILES = ["index.html"]
+#
+# 目录命名：这里必须打成 "assets"（与源码 core/dufsbin.py 的 webui_dir() 一致）。
+# 若打成别的名字（如 "webui"），运行时 resource_dir()/"assets"/index.html 就找不到，
+# --assets 静默失效、页面退回默认样式——这是 v1.2.1 之前"皮肤不生效"的直接原因。
+# 打包成目录整体（而不是逐文件平铺），可保留目录结构、便于将来增加 favicon.ico 等文件。
+# 官方方案：完整搬运 dufs 官方 assets，只覆盖 index.css 里的 CSS 变量。
+# index.html / index.js / favicon.ico 必须与 dufs 同版本，因此一并随包提供。
+UI_FILES = ["index.html", "index.css", "index.js", "favicon.ico", "ASSETS_VERSION"]
 WEBUI = os.path.join(ROOT, "assets")
-for f in UI_FILES:
-    src = os.path.join(WEBUI, f)
-    if os.path.isfile(src):
-        datas.append((src, "webui"))
+if os.path.isdir(WEBUI):
+    missing = [f for f in UI_FILES if not os.path.isfile(os.path.join(WEBUI, f))]
+    if missing:
+        print(f"[spec] 错误：缺少 {missing}，网页皮肤不完整，--assets 将无法生效")
     else:
-        print(f"[spec] 错误：缺少 {src}，网页皮肤不完整")
-if all(os.path.isfile(os.path.join(WEBUI, f)) for f in UI_FILES):
-    print(f"[spec] 内置网页皮肤：{WEBUI}（{', '.join(UI_FILES)}）")
+        # (源目录, 目标目录名) —— 目标必须是 "assets"
+        datas.append((WEBUI, "assets"))
+        print(f"[spec] 内置网页皮肤：{WEBUI} -> assets/")
+else:
+    print(f"[spec] 警告：{WEBUI} 目录不存在，将不带网页皮肤打包")
 
 hiddenimports = [
     "core", "core.config", "core.dufsbin", "core.netutil", "core.server",

@@ -26,9 +26,17 @@ def app_data_dir() -> Path:
 
 
 def resource_dir() -> Path:
-    """打包后的临时资源目录，或开发模式下的项目根目录。"""
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    """打包后的资源目录，或开发模式下的项目根目录。
+
+    两级回退（onefile 与 onedir 行为不同，不能只认 _MEIPASS）：
+      - onefile：资源解压到临时目录 sys._MEIPASS
+      - onedir ：没有 _MEIPASS，资源在 exe 所在目录（或 _internal）
+      - 开发环境：回退到项目根目录
+    原实现在 frozen 为真但无 _MEIPASS 时（onedir）会错误地回退到源码目录。
+    """
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", None) or os.path.dirname(sys.executable)
+        return Path(base)
     return Path(__file__).resolve().parents[1]
 
 
@@ -52,10 +60,30 @@ def webui_dir() -> Path | None:
     也就是说"缺的文件运行时回退内置"只对 index.css / index.js / favicon.ico 成立，
     index.html 不存在会直接 bail 退出——只放 CSS 是启动不了 dufs 的。
     """
-    for d in (resource_dir() / "webui", resource_dir() / "assets"):
-        if (d / "index.html").is_file():
-            return d
-    return None
+    # 只认 "assets"：spec 里 datas 的目标目录名就是 assets。
+    # （曾有个 "webui" 的 fallback 分支，但打包从未产出过该目录，属死代码）
+    d = resource_dir() / "assets"
+    return d if (d / "index.html").is_file() else None
+
+
+def verify_assets_dir(path: str | os.PathLike | None) -> tuple[bool, str]:
+    """启动前核验皮肤目录，返回 (可用, 说明)。
+
+    为什么必须有这个函数：dufs 在 --assets 目录不含 index.html 时**不报错**，
+    而是静默回退内置界面。用户看到的现象就是"皮肤没生效"，但日志里毫无线索。
+    与其让 dufs 静默回退，不如我们在启动前自己核验并明说。
+    """
+    if not path:
+        return False, "未找到内置皮肤目录"
+    d = Path(path)
+    if not d.is_dir():
+        return False, f"皮肤目录不存在：{d}"
+    if not (d / "index.html").is_file():
+        names = sorted(f.name for f in d.iterdir() if f.is_file())
+        return False, (f"{d} 缺少 index.html，皮肤将回退内置界面"
+                       f"（目录内现有：{', '.join(names) or '空'}）")
+    names = sorted(f.name for f in d.iterdir() if f.is_file())
+    return True, f"{d}（{len(names)} 个文件：{', '.join(names)}）"
 
 
 def validate_assets_dir(path: str) -> tuple[bool, str]:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import traceback
 import os
+import re
 import queue
 import time
 import sys
@@ -16,7 +18,7 @@ from core import dufsbin
 from core.theme import ThemedCheckbutton, ThemedCombobox
 from core.winpos import center_on_parent
 from core.config import (AppConfig, RENDER_MODES, ServerConfig, load_config,
-                         save_config)
+                         save_config, config_file)
 from core.netutil import find_free_port, local_ips, port_in_use
 from core.server import DufsProcess
 from core.theme import apply_theme, enable_windows_dark_titlebar, palette
@@ -505,6 +507,23 @@ class DufsGui(tk.Tk):
             pass
 
     # ---------------- 主题 ----------------
+    def skin_dir(self) -> str:
+        """当前生效的网页皮肤目录：外部指定优先，否则用内置。
+
+        统一入口，避免各处直接拼属性名。
+        （曾在这里误写成 self.assets_dir —— 该属性并不存在，
+         实际变量是 self.v_assets_dir(tk.StringVar)，导致 AttributeError。）
+        """
+        v = self.v_assets_dir.get().strip()
+        if v:
+            return v
+        try:
+            from core.dufsbin import webui_dir
+            d = webui_dir()
+            return str(d) if d else ""
+        except Exception:  # noqa: BLE001
+            return ""
+
     def _apply_theme(self) -> None:
         self.colors = apply_theme(self, self.dark)
         c = self.colors
@@ -717,11 +736,80 @@ class DufsGui(tk.Tk):
                 return
         self.dufs_path = binary
 
-        # 记录皮肤是否真的生效，方便核对（"网页还是默认样式"时先看这行）
-        if "--assets" in cfg.to_args():
-            self._log("网页皮肤：已启用自定义界面")
+        # ---- 皮肤诊断 ----
+        # dufs 在 --assets 目录不含 index.html 时**不报错**，而是静默回退内置界面，
+        # 用户看到"皮肤没生效"却毫无线索。这里在启动前自己核验并写清结论。
+        #
+        # 目录优先级：用户在高级设置里指定的外部目录 > 内置皮肤目录
+        # 皮肤诊断分两步，**必须分开说**：
+        #   1) 目录本身是否可用 —— 只是"文件在不在"
+        #   2) --assets 是否真的进了命令行 —— 才是"会不会生效"
+        # 曾把 1) 单独当作结论打印，导致"核验通过但皮肤没生效"这种自相矛盾的日志：
+        # 目录明明是好的，但 cfg.custom_ui 为 False，--assets 压根没传。
+        from core.dufsbin import verify_assets_dir
+
+        _args = cfg.to_args()
+        _skin_arg = ""
+        for _i, _a in enumerate(_args):
+            if _a == "--assets" and _i + 1 < len(_args):
+                _skin_arg = _args[_i + 1]
+                break
+
+        try:
+            _ok, _msg = verify_assets_dir(self.skin_dir() or None)
+            self._log(("网页皮肤：目录核验通过 " if _ok else "网页皮肤：目录不可用 —— ") + _msg)
+        except Exception as e:  # noqa: BLE001
+            _tb = traceback.format_exc().strip().splitlines()
+            _loc = _tb[-2].strip() if len(_tb) >= 2 else "未知位置"
+            self._log(f"网页皮肤：核验异常（{_loc}）{type(e).__name__}: {e}")
+
+        if _skin_arg:
+            self._log(f"网页皮肤：已加入 --assets → {_skin_arg}")
         else:
-            self._log("网页皮肤：未启用，使用 dufs 默认界面")
+            # custom_ui 的实际值来自 %APPDATA%\DufsGui\config.json，会覆盖代码默认值。
+            # 旧版在"皮肤启动失败自动降级"时把它写成 false 并存盘，
+            # 一次失败 = 永久关闭。现在降级已不写盘，但**已存在的旧值不会被自动清掉**。
+            try:
+                _cf = str(config_file())
+            except Exception:  # noqa: BLE001
+                _cf = "config.json"
+            self._log("网页皮肤：本次未传 --assets，网页将是 dufs 默认界面\n"
+                      "              原因：配置中 custom_ui=false（勾选「网页美化界面」即可启用）\n"
+                      "              该值存于 " + _cf + "，删除此文件可恢复默认")
+            if cfg.share_path.strip() and os.path.isfile(cfg.share_path):
+                self._log("提示：共享的是单个文件，dufs 会绕过 index.html 模板，皮肤不生效（官方行为）")
+
+        # 官方限制：serve-path 传文件（而非目录）时 index.html 模板被完全绕过，
+        # 皮肤必然不生效。提前说明，避免用户以为是皮肤坏了。
+        if cfg.share_path.strip() and os.path.isfile(cfg.share_path):
+            self._log("提示：共享的是单个文件，dufs 会绕过 index.html 模板，皮肤不生效（官方行为）")
+
+        # 皮肤版本与 dufs 版本不一致时，DOM / 数据契约可能变化
+        try:
+            from core.dufsbin import version as _vfn, webui_dir as _wd3
+            _d3 = _wd3()
+            if _d3:
+                _av = _d3 / "ASSETS_VERSION"
+                _skin_v = _av.read_text(encoding="utf-8").strip() if _av.is_file() else ""
+                _dv = ""
+                if self.dufs_path:
+                    _m2 = re.search(r"(\d+\.\d+\.\d+)", _vfn(self.dufs_path) or "")
+                    _dv = _m2.group(1) if _m2 else ""
+                if _skin_v and _dv and _skin_v != _dv:
+                    self._log(f"提示：网页皮肤版本 {_skin_v} 与 dufs {_dv} 不一致，"
+                              f"可执行 python tools/fetch_skin.py {_dv} 重新生成")
+        except Exception:  # noqa: BLE001
+            pass
+
+        # custom_ui 的实际值来自 %APPDATA%\DufsGui\config.json，会覆盖程序默认值
+        if not cfg.custom_ui:
+            try:
+                _cf = str(config_file())
+            except Exception:  # noqa: BLE001
+                _cf = "config.json"
+            self._log("网页皮肤：未启用（配置中 custom_ui=false）；"
+                      "勾选「网页美化界面」即可启用\n"
+                      "              若想彻底恢复默认，删除配置文件：" + _cf)
 
         host_check = "127.0.0.1" if cfg.bind in ("0.0.0.0", "::", "[::]") else cfg.bind
         if port_in_use(cfg.port, host_check):
@@ -752,6 +840,9 @@ class DufsGui(tk.Tk):
             retried = False
             if "--assets" in args and cfg.custom_ui:
                 self._log("首次启动未就绪，尝试不带自定义网页皮肤重新启动…")
+                # 只在本次会话内关闭，**不调用 _save()**。
+                # 旧版在这里写盘，导致一次启动失败就把 custom_ui=false 永久存进
+                # config.json，之后即使代码修好也一直读回 false —— 皮肤再也不会启用。
                 self.v_custom_ui.set(False)
                 cfg.custom_ui = False
                 args = cfg.to_args()

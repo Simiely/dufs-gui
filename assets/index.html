@@ -1,775 +1,136 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en-US">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dufs 文件共享</title>
-
-<!--
-  重要：CSS 与 JS 已内联，不引用任何外部资源。
-
-  原因：dufs 用 __ASSETS_PREFIX__ 作为资源 URL 前缀的占位符，但各版本写法不一致
-  —— 部分版本（含 crates 文档记载的）用的是 __ASSERTS_PREFIX__（多一个 S）。
-  一旦写法对不上，替换就不会发生，浏览器会去请求字面量路径导致 404，
-  样式和脚本全部丢失、页面退回无样式状态。
-  内联后完全不依赖该占位符，只剩 __INDEX_DATA__ 一个（各版本写法一致）。
-
-  若要改样式：直接编辑下面的 <style> 块；改交互逻辑：编辑 <script> 块。
--->
-
-<style>
-@charset "UTF-8";
-
-/* ==========================================================================
-   Dufs GUI 网页皮肤
-   自研前端配套的样式：index.html / index.js / index.css 全部自带，
-   不加载也不依赖 dufs 内置的任何前端文件，因此不存在版本兼容问题。
-   ========================================================================== */
-
-:root {
-  --bg: #14171c;
-  --bg-soft: #1b1e23;
-  --card: #212630;
-  --card-hover: #28303c;
-  --line: #2e3540;
-  --text: #e6e8ec;
-  --muted: #9aa4b2;
-  --accent: #4f9cf9;
-  --accent-soft: rgba(79, 156, 249, 0.14);
-  --ok: #3fb950;
-  --danger: #e05c5c;
-  --radius: 10px;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
-    "PingFang SC", "Hiragino Sans GB", Roboto, Helvetica, Arial, sans-serif;
-}
-
-* { box-sizing: border-box; }
-
-html, body { margin: 0; padding: 0; min-height: 100%; }
-
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 14px;
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-}
-
-/* 顶部装饰条 */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0 0 auto 0;
-  height: 2px;
-  background: linear-gradient(90deg, var(--accent), #7c5cff, var(--ok));
-  z-index: 100;
-}
-
-a { color: var(--accent); text-decoration: none; }
-a:hover { color: #7bb5ff; }
-
-/* ---------------- 顶栏 ---------------- */
-.head {
-  position: sticky;
-  top: 0;
-  z-index: 50;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 22px;
-  background: rgba(27, 30, 35, 0.92);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--line);
-}
-
-.breadcrumb {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  font-size: 15px;
-  font-weight: 600;
-  min-width: 0;
-}
-
-.breadcrumb .crumb {
-  padding: 4px 9px;
-  border-radius: 7px;
-  color: var(--text);
-  transition: background .15s ease, color .15s ease;
-}
-.breadcrumb a.crumb:hover { background: var(--accent-soft); color: var(--accent); }
-.breadcrumb .current { background: var(--accent-soft); color: var(--accent); }
-.breadcrumb .sep { color: var(--muted); padding: 0 2px; font-weight: 400; }
-
-.toolbox {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: auto;
-  flex-wrap: wrap;
-}
-
-.searchbar input {
-  background: var(--card);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 7px 12px;
-  font-size: 13px;
-  font-family: var(--font);
-  min-width: 180px;
-  outline: none;
-  transition: border-color .15s ease, box-shadow .15s ease;
-}
-.searchbar input::placeholder { color: var(--muted); }
-.searchbar input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.actions { display: flex; gap: 8px; }
-
-button {
-  background: var(--card);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 7px 14px;
-  font-size: 13px;
-  font-family: var(--font);
-  font-weight: 500;
-  cursor: pointer;
-  transition: background .15s ease, border-color .15s ease, color .15s ease;
-}
-button:hover {
-  background: var(--card-hover);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-button:active { transform: translateY(1px); }
-
-.userbox { color: var(--muted); font-size: 13px; }
-.userbox .user {
-  background: var(--accent-soft);
-  color: var(--accent);
-  padding: 4px 10px;
-  border-radius: 999px;
-}
-
-/* ---------------- 主体 ---------------- */
-.main {
-  padding: 22px;
-  max-width: 1180px;
-  margin: 0 auto;
-  width: 100%;
-}
-
-/* ---------------- 通用表格 ---------------- */
-.paths-table,
-.uploaders-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0 4px;
-  font-size: 14px;
-}
-
-.paths-table thead th {
-  padding: 8px 14px;
-  text-align: left;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  border: none;
-  background: transparent;
-  white-space: nowrap;
-}
-
-th.sortable { cursor: pointer; user-select: none; }
-th.sortable:hover { color: var(--accent); }
-
-.paths-table tbody tr { background: var(--card); transition: background .13s ease; }
-.paths-table tbody tr:hover { background: var(--card-hover); }
-
-.paths-table tbody td {
-  padding: 11px 14px;
-  border: none;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  vertical-align: middle;
-}
-.paths-table tbody tr td:first-child {
-  border-left: 1px solid var(--line);
-  border-top-left-radius: var(--radius);
-  border-bottom-left-radius: var(--radius);
-}
-.paths-table tbody tr td:last-child {
-  border-right: 1px solid var(--line);
-  border-top-right-radius: var(--radius);
-  border-bottom-right-radius: var(--radius);
-}
-
-.col-name { width: 55%; }
-.col-mtime { width: 150px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
-.col-size  { width: 100px; text-align: right; color: var(--muted); font-size: 12.5px;
-             font-variant-numeric: tabular-nums; }
-.col-actions { width: 110px; text-align: right; white-space: nowrap; }
-
-.path {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  max-width: 100%;
-  color: var(--text);
-  font-weight: 500;
-}
-.path .ico { font-size: 15px; flex-shrink: 0; }
-.path .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.path:hover .nm { color: var(--accent); }
-
-.row-up .path { color: var(--muted); font-weight: 400; }
-
-/* 操作按钮 */
-.act {
-  display: inline-block;
-  min-width: 26px;
-  padding: 3px 7px;
-  margin-left: 4px;
-  border-radius: 6px;
-  color: var(--muted);
-  font-size: 13px;
-  background: transparent;
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: all .13s ease;
-}
-.act:hover { background: var(--accent-soft); color: var(--accent); }
-.act.danger:hover { background: rgba(224, 92, 92, .15); color: var(--danger); }
-
-/* ---------------- 空目录 ---------------- */
-.empty-folder {
-  padding: 46px 20px;
-  text-align: center;
-  color: var(--muted);
-  background: var(--bg-soft);
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
-}
-.empty-folder::before {
-  content: "📭";
-  display: block;
-  font-size: 30px;
-  margin-bottom: 10px;
-  opacity: .7;
-}
-
-/* ---------------- 上传进度 ---------------- */
-.uploaders { margin-bottom: 12px; }
-.uploaders-table td,
-.uploaders-table th { padding: 9px 14px; border: none; font-size: 13px; }
-.uploaders-table th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
-
-.bar {
-  display: inline-block;
-  width: calc(100% - 52px);
-  height: 6px;
-  background: var(--bg);
-  border-radius: 999px;
-  overflow: hidden;
-  vertical-align: middle;
-}
-.bar-in {
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent), #7c5cff);
-  border-radius: 999px;
-  transition: width .2s ease;
-}
-.pct {
-  display: inline-block;
-  width: 44px;
-  text-align: right;
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.col-status { width: 90px; color: var(--muted); font-size: 12px; }
-
-/* ---------------- 拖拽遮罩 ---------------- */
-.dropzone {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  background: rgba(20, 23, 28, .82);
-  backdrop-filter: blur(3px);
-}
-.dropzone.on { display: flex; }
-.dropzone-inner {
-  padding: 40px 60px;
-  border: 2px dashed var(--accent);
-  border-radius: 16px;
-  color: var(--accent);
-  font-size: 17px;
-  font-weight: 600;
-}
-
-/* ---------------- 错误提示 ---------------- */
-.error-box {
-  margin-top: 16px;
-  padding: 12px 16px;
-  background: rgba(224, 92, 92, .12);
-  border: 1px solid rgba(224, 92, 92, .4);
-  border-radius: var(--radius);
-  color: #ffb4b4;
-  font-size: 13px;
-  white-space: pre-wrap;
-}
-
-/* ---------------- 滚动条 ---------------- */
-::-webkit-scrollbar { width: 11px; height: 11px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: #39414f; border-radius: 6px; border: 2px solid var(--bg); }
-::-webkit-scrollbar-thumb:hover { background: #4a5464; }
-
-::selection { background: var(--accent-soft); color: var(--text); }
-
-/* ---------------- 响应式 ---------------- */
-@media (max-width: 640px) {
-  .head { padding: 12px 14px; }
-  .main { padding: 12px; }
-  .col-mtime { display: none; }
-  .searchbar input { min-width: 110px; }
-}
-
-/* 访问者偏好浅色时自动切换 */
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f6f8fa;
-    --bg-soft: #ffffff;
-    --card: #ffffff;
-    --card-hover: #f0f3f7;
-    --line: #dde3ea;
-    --text: #1f2328;
-    --muted: #656d76;
-    --accent-soft: rgba(47, 111, 219, 0.12);
-  }
-  .head { background: rgba(255, 255, 255, .9); }
-}
-
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width" />
+  <noscript>
+    <meta http-equiv="refresh" content="0; url=?noscript">
+  </noscript>
+  <link rel="icon" type="image/x-icon" href="__ASSETS_PREFIX__favicon.ico">
+  <link rel="stylesheet" href="__ASSETS_PREFIX__index.css">
 </head>
+
 <body>
-
-<!-- dufs 会把 __INDEX_DATA__ 替换成 base64 编码的目录数据（JSON） -->
-<div id="index-data" style="display:none">__INDEX_DATA__</div>
-
-<header class="head">
-  <nav class="breadcrumb" id="breadcrumb"></nav>
-  <div class="toolbox">
-    <form class="searchbar" id="searchbar" onsubmit="return false;">
-      <input type="search" id="search-input" placeholder="搜索文件名…" autocomplete="off">
-    </form>
-    <div class="actions" id="actions">
-      <button type="button" id="btn-upload" title="上传文件">上传</button>
-      <button type="button" id="btn-mkdir" title="新建文件夹">新建文件夹</button>
-      <button type="button" id="btn-zip" title="打包下载当前目录">打包下载</button>
+  <div class="head">
+    <div class="breadcrumb"></div>
+    <div class="toolbox">
+      <a href="" class="control download hidden" title="Download file" download="">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <path
+            d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z" />
+          <path
+            d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z" />
+        </svg>
+      </a>
+      <div class="control move-file hidden" title="Move & Rename">
+        <svg class="icon-move" width="16" height="16" viewBox="0 0 16 16">
+          <path fill-rule="evenodd"
+            d="M1.5 1.5A.5.5 0 0 0 1 2v4.8a2.5 2.5 0 0 0 2.5 2.5h9.793l-3.347 3.346a.5.5 0 0 0 .708.708l4.2-4.2a.5.5 0 0 0 0-.708l-4-4a.5.5 0 0 0-.708.708L13.293 8.3H3.5A1.5 1.5 0 0 1 2 6.8V2a.5.5 0 0 0-.5-.5z">
+          </path>
+        </svg>
+      </div>
+      <div class="control delete-file hidden" title="Delete">
+        <svg class="icon-delete" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+          <path
+            d="M6.854 7.146a.5.5 0 1 0-.708.708L7.293 9l-1.147 1.146a.5.5 0 0 0 .708.708L8 9.707l1.146 1.147a.5.5 0 0 0 .708-.708L8.707 9l1.147-1.146a.5.5 0 0 0-.708-.708L8 8.293 6.854 7.146z" />
+          <path
+            d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2zM9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5v2z" />
+        </svg>
+      </div>
+      <div class="control upload-file hidden" title="Upload files/folders">
+        <label for="file">
+          <svg width="16" height="16" viewBox="0 0 16 16">
+            <path
+              d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z" />
+            <path
+              d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z" />
+          </svg>
+        </label>
+        <input type="file" id="file" title="Upload files/folders" name="file" multiple>
+      </div>
+      <div class="control new-folder hidden" title="New folder">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <path
+            d="m.5 3 .04.87a1.99 1.99 0 0 0-.342 1.311l.637 7A2 2 0 0 0 2.826 14H9v-1H2.826a1 1 0 0 1-.995-.91l-.637-7A1 1 0 0 1 2.19 4h11.62a1 1 0 0 1 .996 1.09L14.54 8h1.005l.256-2.819A2 2 0 0 0 13.81 3H9.828a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 6.172 1H2.5a2 2 0 0 0-2 2zm5.672-1a1 1 0 0 1 .707.293L7.586 3H2.19c-.24 0-.47.042-.683.12L1.5 2.98a1 1 0 0 1 1-.98h3.672z" />
+          <path
+            d="M13.5 10a.5.5 0 0 1 .5.5V12h1.5a.5.5 0 1 1 0 1H14v1.5a.5.5 0 1 1-1 0V13h-1.5a.5.5 0 0 1 0-1H13v-1.5a.5.5 0 0 1 .5-.5z" />
+        </svg>
+      </div>
+      <div class="control new-file hidden" title="New File">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <path
+            d="M8 6.5a.5.5 0 0 1 .5.5v1.5H10a.5.5 0 0 1 0 1H8.5V11a.5.5 0 0 1-1 0V9.5H6a.5.5 0 0 1 0-1h1.5V7a.5.5 0 0 1 .5-.5z" />
+          <path
+            d="M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h5.5L14 4.5zm-3 0A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4.5h-2z" />
+        </svg>
+      </div>
     </div>
-    <div class="userbox" id="userbox"></div>
+    <form class="searchbar hidden">
+      <div class="icon">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <path
+            d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z" />
+        </svg>
+      </div>
+      <input id="search" title="Searching for folders or files" name="q" type="text" maxlength="128" autocomplete="off"
+        tabindex="1">
+      <input type="submit" hidden />
+    </form>
+    <div class="toolbox-right">
+      <div class="login-btn hidden" title="Login">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <path fill-rule="evenodd"
+            d="M6 3.5a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-2a.5.5 0 0 0-1 0v2A1.5 1.5 0 0 0 6.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 14.5 2h-8A1.5 1.5 0 0 0 5 3.5v2a.5.5 0 0 0 1 0v-2z" />
+          <path fill-rule="evenodd"
+            d="M11.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 1 0-.708.708L10.293 7.5H1.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708l3-3z" />
+        </svg>
+      </div>
+      <div class="logout-btn hidden" title="Logout">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <path fill-rule="evenodd" d="M10 3.5a.5.5 0 0 0-.5-.5h-8a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5v-2a.5.5 0 0 1 1 0v2A1.5 1.5 0 0 1 9.5 14h-8A1.5 1.5 0 0 1 0 12.5v-9A1.5 1.5 0 0 1 1.5 2h8A1.5 1.5 0 0 1 11 3.5v2a.5.5 0 0 1-1 0z"/>
+          <path fill-rule="evenodd" d="M4.146 8.354a.5.5 0 0 1 0-.708l3-3a.5.5 0 1 1 .708.708L5.707 7.5H14.5a.5.5 0 0 1 0 1H5.707l2.147 2.146a.5.5 0 0 1-.708.708z"/>
+        </svg>
+        <span class="user-name"></span>
+      </div>
+      <div class="save-btn hidden" title="Save file">
+        <svg viewBox="0 0 1024 1024" width="24" height="24">
+          <path
+            d="M426.666667 682.666667v42.666666h170.666666v-42.666666h-170.666666z m-42.666667-85.333334h298.666667v128h42.666666V418.133333L605.866667 298.666667H298.666667v426.666666h42.666666v-128h42.666667z m260.266667-384L810.666667 379.733333V810.666667H213.333333V213.333333h430.933334zM341.333333 341.333333h85.333334v170.666667H341.333333V341.333333z"
+            p-id="8311"></path>
+        </svg>
+      </div>
+    </div>
   </div>
-</header>
-
-<main class="main">
-  <div class="uploaders" id="uploaders" hidden>
-    <table class="uploaders-table">
-      <thead><tr><th>名称</th><th>进度</th><th class="col-status">状态</th></tr></thead>
-      <tbody id="uploaders-body"></tbody>
-    </table>
+  <div class="main">
+    <div class="index-page hidden">
+      <div class="empty-folder hidden"></div>
+      <table class="uploaders-table hidden">
+        <thead>
+          <tr>
+            <th class="cell-name" colspan="2">Uploaders</th>
+            <th class="cell-status"></th>
+            <th class="cell-size"></th>
+            <th class="cell-percent"></th>
+            <th class="cell-speed"></th>
+            <th class="cell-eta"></th>
+          </tr>
+        </thead>
+      </table>
+      <table class="paths-table hidden">
+        <thead>
+        </thead>
+        <tbody>
+        </tbody>
+      </table>
+    </div>
+    <div class="editor-page hidden">
+      <div class="not-editable hidden"></div>
+      <textarea id="editor" class="editor hidden" aria-label="Editor" cols="10"></textarea>
+    </div>
   </div>
-
-  <div class="dropzone" id="dropzone"><div class="dropzone-inner">松开即可上传到当前目录</div></div>
-
-  <div class="index-page">
-    <table class="paths-table">
-      <thead>
-        <tr>
-          <th class="col-name sortable" data-sort="name">名称</th>
-          <th class="col-mtime sortable" data-sort="mtime">修改时间</th>
-          <th class="col-size sortable" data-sort="size">大小</th>
-          <th class="col-actions">操作</th>
-        </tr>
-      </thead>
-      <tbody id="paths-body"></tbody>
-    </table>
-    <div class="empty-folder" id="empty-folder" hidden>这个文件夹是空的</div>
-  </div>
-
-  <div class="error-box" id="error-box" hidden></div>
-</main>
-
-<input type="file" id="file-input" multiple hidden>
-
-<script>
-/* Dufs GUI 网页皮肤 —— 自研前端，不依赖 dufs 内置的 index.js。
- *
- * 为什么自研：dufs 的 --assets 只做"逐个覆盖"，如果我们不提供 index.js，
- * 它会回退到内置版本，而内置 JS 依赖内置 index.html 的 DOM 结构；
- * 我们拿不到那份 HTML 的稳定契约，所以干脆全部自己实现，避免版本耦合。
- *
- * 数据来源：dufs 把目录数据以 base64(JSON) 注入 #index-data。
- * 结构（IndexData）：
- *   kind, href, uri_prefix, allow_upload, allow_delete, allow_search,
- *   allow_archive, dir_exists, auth, user, paths[]
- *   paths[i]: { path_type: Dir|SymlinkDir|File|SymlinkFile, name, mtime(ms), size }
- */
-
-(function () {
-  'use strict';
-
-  // ---------- 取数 ----------
-  var raw = '';
-  var el = document.getElementById('index-data');
-  if (el) raw = (el.textContent || '').trim();
-
-  var DATA;
-  try {
-    // escape/unescape 组合用于处理 atob 输出里的非 ASCII（中文文件名）
-    DATA = JSON.parse(decodeURIComponent(escape(atob(raw))));
-  } catch (e) {
-    fatal('无法解析目录数据：' + e.message);
-    return;
-  }
-
-  if (!DATA || DATA.kind !== 'Index') {
-    // 编辑器 / 查看器等其它模式不在本皮肤支持范围内，回落到最朴素的表现
-    fatal('当前页面模式（' + (DATA && DATA.kind) + '）不在自定义皮肤的支持范围内，' +
-          '请在「网页美化界面」关闭后使用 dufs 默认界面。');
-    return;
-  }
-
-  var PREFIX = DATA.uri_prefix || '';
-  var HREF = DATA.href || '/';
-
-  // ---------- 工具 ----------
-  function q(id) { return document.getElementById(id); }
-
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-    });
-  }
-
-  function isDir(p) { return p.path_type === 'Dir' || p.path_type === 'SymlinkDir'; }
-
-  function fullUrl(pathPart) {
-    // uri_prefix 形如 "/files"，href 形如 "/sub/"，name 相对当前目录
-    return PREFIX + pathPart;
-  }
-
-  function fmtSize(n) {
-    if (n === null || n === undefined) return '-';
-    if (n < 1024) return n + ' B';
-    var u = ['KB', 'MB', 'GB', 'TB'];
-    var v = n / 1024, i = 0;
-    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
-    return (v < 10 ? v.toFixed(1) : Math.round(v)) + ' ' + u[i];
-  }
-
-  function fmtTime(ms) {
-    if (!ms) return '-';
-    var d = new Date(ms);
-    var p = function (x) { return (x < 10 ? '0' : '') + x; };
-    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
-           ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
-  }
-
-  function fatal(msg) {
-    var box = q('error-box');
-    if (box) { box.hidden = false; box.textContent = msg; }
-    var t = q('paths-body');
-    if (t) t.innerHTML = '';
-  }
-
-  function toast(msg) {
-    var box = q('error-box');
-    if (!box) return;
-    box.hidden = false;
-    box.textContent = msg;
-    setTimeout(function () { box.hidden = true; }, 4000);
-  }
-
-  // ---------- 面包屑 ----------
-  function renderBreadcrumb() {
-    var nav = q('breadcrumb');
-    if (!nav) return;
-    var parts = HREF.split('/').filter(function (x) { return x !== ''; });
-    var html = '<a class="crumb" href="' + esc(fullUrl('/')) + '">首页</a>';
-    var acc = '';
-    for (var i = 0; i < parts.length; i++) {
-      acc += '/' + parts[i];
-      var last = (i === parts.length - 1);
-      html += '<span class="sep">/</span>';
-      html += last
-        ? '<span class="crumb current">' + esc(decodeURIComponent(parts[i])) + '</span>'
-        : '<a class="crumb" href="' + esc(fullUrl(acc + '/')) + '">' +
-          esc(decodeURIComponent(parts[i])) + '</a>';
-    }
-    nav.innerHTML = html;
-  }
-
-  // ---------- 文件列表 ----------
-  var sortKey = 'name';
-  var sortAsc = true;
-
-  function sortPaths(list) {
-    var dirs = list.filter(isDir), files = list.filter(function (p) { return !isDir(p); });
-    function cmp(a, b) {
-      var r;
-      if (sortKey === 'mtime') r = (a.mtime || 0) - (b.mtime || 0);
-      else if (sortKey === 'size') r = (a.size || 0) - (b.size || 0);
-      else r = String(a.name).localeCompare(String(b.name), 'zh-Hans-CN');
-      return sortAsc ? r : -r;
-    }
-    // 目录永远排在前面
-    return dirs.sort(cmp).concat(files.sort(cmp));
-  }
-
-  function renderPaths() {
-    var list = (DATA.paths || []).slice();
-    var body = q('paths-body');
-    var empty = q('empty-folder');
-    if (!body) return;
-
-    if (!list.length) {
-      body.innerHTML = '';
-      if (empty) empty.hidden = false;
-      return;
-    }
-    if (empty) empty.hidden = true;
-
-    var html = '';
-
-    // 返回上级
-    if (HREF && HREF !== '/') {
-      var parent = HREF.replace(/\/[^/]*\/?$/, '') || '/';
-      html += '<tr class="row-up">' +
-        '<td class="col-name"><a class="path dir" href="' + esc(fullUrl(parent + '/')) + '">' +
-        '<span class="ico">↩</span>返回上级</a></td>' +
-        '<td class="col-mtime">-</td><td class="col-size">-</td><td class="col-actions"></td></tr>';
-    }
-
-    sortPaths(list).forEach(function (p) {
-      var d = isDir(p);
-      var href = fullUrl(HREF + encodeURIComponent(p.name) + (d ? '/' : ''));
-      var ico = d ? '📁' : '📄';
-      var cls = d ? 'path dir' : 'path file';
-
-      var acts = '';
-      if (d) {
-        if (DATA.allow_archive) {
-          acts += '<a class="act" href="' + esc(href + '?zip') + '" title="打包下载">⤓</a>';
-        }
-      } else {
-        acts += '<a class="act" href="' + esc(href) + '" download title="下载">⤓</a>';
-      }
-      if (DATA.allow_delete) {
-        acts += '<button type="button" class="act danger" data-del="' +
-                esc(HREF + p.name) + '" title="删除">✕</button>';
-      }
-
-      html += '<tr>' +
-        '<td class="col-name"><a class="' + cls + '" href="' + esc(href) + '">' +
-          '<span class="ico">' + ico + '</span>' +
-          '<span class="nm">' + esc(p.name) + '</span></a></td>' +
-        '<td class="col-mtime">' + fmtTime(p.mtime) + '</td>' +
-        '<td class="col-size">' + (d ? (p.size != null ? p.size + ' 项' : '-') : fmtSize(p.size)) + '</td>' +
-        '<td class="col-actions">' + acts + '</td>' +
-      '</tr>';
-    });
-
-    body.innerHTML = html;
-
-    Array.prototype.forEach.call(body.querySelectorAll('[data-del]'), function (b) {
-      b.addEventListener('click', function () {
-        if (!confirm('确定删除「' + b.getAttribute('data-del') + '」？')) return;
-        doDelete(b.getAttribute('data-del'));
-      });
-    });
-  }
-
-  function doDelete(path) {
-    fetch(fullUrl(path), { method: 'DELETE', credentials: 'same-origin' })
-      .then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        location.reload();
-      })
-      .catch(function (e) { toast('删除失败：' + e.message); });
-  }
-
-  // ---------- 排序表头 ----------
-  function bindSort() {
-    Array.prototype.forEach.call(document.querySelectorAll('th.sortable'), function (th) {
-      th.addEventListener('click', function () {
-        var k = th.getAttribute('data-sort');
-        if (sortKey === k) sortAsc = !sortAsc;
-        else { sortKey = k; sortAsc = true; }
-        renderPaths();
-      });
-    });
-  }
-
-  // ---------- 上传 ----------
-  var uploads = [];
-
-  function renderUploaders() {
-    var wrap = q('uploaders');
-    var body = q('uploaders-body');
-    if (!wrap || !body) return;
-    wrap.hidden = uploads.length === 0;
-    body.innerHTML = uploads.map(function (u) {
-      return '<tr><td>' + esc(u.name) + '</td>' +
-        '<td><div class="bar"><div class="bar-in" style="width:' + u.pct + '%"></div></div>' +
-        '<span class="pct">' + u.pct + '%</span></td>' +
-        '<td class="col-status">' + esc(u.status) + '</td></tr>';
-    }).join('');
-  }
-
-  function uploadOne(file) {
-    var rec = { name: file.name, pct: 0, status: '等待' };
-    uploads.push(rec);
-    renderUploaders();
-
-    var url = fullUrl(HREF + encodeURIComponent(file.name));
-    var xhr = new XMLHttpRequest();
-    xhr.open('PUT', url, true);
-    xhr.upload.onprogress = function (e) {
-      if (e.lengthComputable) {
-        rec.pct = Math.round(e.loaded * 100 / e.total);
-        rec.status = '上传中';
-        renderUploaders();
-      }
-    };
-    xhr.onload = function () {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        rec.pct = 100; rec.status = '完成';
-        renderUploaders();
-        setTimeout(function () {
-          uploads = uploads.filter(function (x) { return x !== rec; });
-          renderUploaders();
-          location.reload();
-        }, 500);
-      } else {
-        rec.status = '失败 ' + xhr.status;
-        renderUploaders();
-      }
-    };
-    xhr.onerror = function () { rec.status = '网络错误'; renderUploaders(); };
-    xhr.send(file);
-  }
-
-  function startUpload(files) {
-    if (!files || !files.length) return;
-    Array.prototype.forEach.call(files, uploadOne);
-  }
-
-  function bindUpload() {
-    var btn = q('btn-upload');
-    var input = q('file-input');
-    if (btn && input) {
-      btn.addEventListener('click', function () { input.click(); });
-      input.addEventListener('change', function () {
-        startUpload(input.files);
-        input.value = '';
-      });
-    }
-
-    // 拖拽上传
-    var dz = q('dropzone');
-    var depth = 0;
-    window.addEventListener('dragenter', function (e) {
-      e.preventDefault(); depth++;
-      if (DATA.allow_upload && dz) dz.classList.add('on');
-    });
-    window.addEventListener('dragleave', function () {
-      depth--;
-      if (depth <= 0 && dz) { dz.classList.remove('on'); depth = 0; }
-    });
-    window.addEventListener('dragover', function (e) { e.preventDefault(); });
-    window.addEventListener('drop', function (e) {
-      e.preventDefault();
-      if (dz) dz.classList.remove('on');
-      depth = 0;
-      if (!DATA.allow_upload) { toast('未开启上传权限'); return; }
-      if (e.dataTransfer && e.dataTransfer.files) startUpload(e.dataTransfer.files);
-    });
-  }
-
-  // ---------- 其它操作 ----------
-  function bindActions() {
-    var mkdir = q('btn-mkdir');
-    if (mkdir) {
-      mkdir.addEventListener('click', function () {
-        var name = prompt('新文件夹名称');
-        if (!name) return;
-        fetch(fullUrl(HREF + encodeURIComponent(name) + '/'), {
-          method: 'MKCOL', credentials: 'same-origin'
-        }).then(function (r) {
-          if (!r.ok && r.status !== 405) throw new Error('HTTP ' + r.status);
-          location.reload();
-        }).catch(function (e) { toast('创建失败：' + e.message); });
-      });
-    }
-
-    var zip = q('btn-zip');
-    if (zip) {
-      zip.addEventListener('click', function () {
-        location.href = fullUrl(HREF + '?zip');
-      });
-    }
-
-    var si = q('search-input');
-    var sb = q('searchbar');
-    if (si && sb) {
-      si.addEventListener('keydown', function (e) {
-        if (e.key !== 'Enter') return;
-        var v = si.value.trim();
-        if (!v) return;
-        location.href = fullUrl(HREF + '?q=' + encodeURIComponent(v));
-      });
-    }
-  }
-
-  // ---------- 按权限显隐 ----------
-  function applyPerms() {
-    var up = q('btn-upload'), mk = q('btn-mkdir'), zp = q('btn-zip'),
-        sb = q('searchbar'), box = q('userbox');
-    if (up) up.hidden = !DATA.allow_upload;
-    if (mk) mk.hidden = !DATA.allow_upload;
-    if (zp) zp.hidden = !DATA.allow_archive;
-    if (sb) sb.hidden = !DATA.allow_search;
-    if (box) {
-      if (DATA.auth && DATA.user) {
-        box.innerHTML = '<span class="user">👤 ' + esc(DATA.user) + '</span>';
-      } else {
-        box.innerHTML = '';
-      }
-    }
-  }
-
-  // ---------- 启动 ----------
-  renderBreadcrumb();
-  applyPerms();
-  renderPaths();
-  bindSort();
-  bindUpload();
-  bindActions();
-})();
-
-</script>
+  <template id="index-data">__INDEX_DATA__</template>
+  <script src="__ASSETS_PREFIX__index.js"></script>
 </body>
+
 </html>
