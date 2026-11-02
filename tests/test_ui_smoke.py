@@ -111,6 +111,48 @@ class UiSmokeTest(unittest.TestCase):
                 self.assertEqual(self.gui.v_status.get(), "未启动")
                 self.assertEqual(self.gui.btn_start["state"], "normal")
 
+    def test_open_browser_when_idle_has_feedback(self):
+        """未运行点「打开网页」不能静默无反应。"""
+        self.gui._stop(silent=True)
+        opened = []
+        infos = []
+        logs = []
+        orig_open = app_module.webbrowser.open
+        orig_info = app_module.messagebox.showinfo
+        orig_log = self.gui._log
+        app_module.webbrowser.open = lambda *a, **k: opened.append(a)
+        app_module.messagebox.showinfo = lambda title, msg: infos.append((title, msg))
+        self.gui._log = lambda line: logs.append(line)
+        try:
+            self.gui._open_browser()
+        finally:
+            app_module.webbrowser.open = orig_open
+            app_module.messagebox.showinfo = orig_info
+            self.gui._log = orig_log
+        self.assertEqual(opened, [], "未运行时不应打开浏览器")
+        self.assertTrue(infos and "服务未运行" in infos[-1][0])
+        self.assertTrue(any("服务未运行" in x for x in logs))
+
+    def test_export_log_failure_is_reported(self):
+        """保存路径不可写时要给可读提示，不能抛到回调层。"""
+        with tempfile.TemporaryDirectory() as td:
+            errors = []
+            logs = []
+            orig_save = app_module.filedialog.asksaveasfilename
+            orig_err = app_module.messagebox.showerror
+            orig_log = self.gui._log
+            app_module.filedialog.asksaveasfilename = lambda **kw: td
+            app_module.messagebox.showerror = lambda title, msg: errors.append((title, msg))
+            self.gui._log = lambda line: logs.append(line)
+            try:
+                self.gui._export_log()  # 目录不能直接 write_text
+            finally:
+                app_module.filedialog.asksaveasfilename = orig_save
+                app_module.messagebox.showerror = orig_err
+                self.gui._log = orig_log
+            self.assertTrue(errors and "导出失败" in errors[-1][0])
+            self.assertTrue(any("日志导出失败" in x for x in logs))
+
     def test_advanced_popup(self):
         """高级设置应弹出独立窗口，而不是在主界面展开。"""
         self.gui.adv_win = None

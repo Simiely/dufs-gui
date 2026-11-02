@@ -928,12 +928,15 @@ class DufsGui(tk.Tk):
 
     # ---------------- 浏览器 / 剪贴板 ----------------
     def _open_browser(self) -> None:
-        if self.proc.running:
-            # 加时间戳 fragment：URL 变了浏览器才会重新拉取，避免看到缓存的旧页面。
-            # 用 fragment 而不是 query，是因为 fragment 不会发给服务端，
-            # 不会影响 dufs 对 ?q= / ?zip 等参数的解析。
-            import time
-            webbrowser.open(self.current_config().url() + "#" + str(int(time.time())))
+        if not self.proc.running:
+            self._log("服务未运行，请先开启共享")
+            messagebox.showinfo("服务未运行", "请先开启共享，再打开网页。")
+            return
+        # 加时间戳 fragment：URL 变了浏览器才会重新拉取，避免看到缓存的旧页面。
+        # 用 fragment 而不是 query，是因为 fragment 不会发给服务端，
+        # 不会影响 dufs 对 ?q= / ?zip 等参数的解析。
+        import time
+        webbrowser.open(self.current_config().url() + "#" + str(int(time.time())))
 
     def _copy_url(self) -> None:
         url = self.current_config().url() if self.proc.running else self.v_url.get()
@@ -960,7 +963,12 @@ class DufsGui(tk.Tk):
         if not p:
             return
         content = self.log_text.get("1.0", "end")
-        Path(p).write_text(content, encoding="utf-8")
+        try:
+            Path(p).write_text(content, encoding="utf-8")
+        except OSError as e:
+            messagebox.showerror("导出失败", f"{e}\n\n路径：{p}")
+            self._log(f"日志导出失败：{e}")
+            return
         self._log(f"日志已导出：{p}")
 
     # ---------------- 队列与关闭 ----------------
