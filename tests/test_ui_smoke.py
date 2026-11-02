@@ -48,6 +48,19 @@ class UiSmokeTest(unittest.TestCase):
             self.assertEqual(cfg.validate(), [])
             self.assertTrue(cfg.url().endswith("/files/"))
 
+    def test_port_input_validation(self):
+        """清空/非数字/越界时不得抛 TclError，只返回可读提示。"""
+        for raw in ("", "abc", "70000", "0"):
+            self.gui.v_port.set(raw)
+            self.gui._refresh_preview()  # trace 路径不应抛异常
+            port, msg = self.gui.port_from_form()
+            self.assertIsNone(port, f"{raw!r} 不应解析成合法端口")
+            self.assertTrue(msg, f"{raw!r} 应给出可读提示")
+        self.gui.v_port.set("5000")
+        port, msg = self.gui.port_from_form()
+        self.assertEqual(port, 5000)
+        self.assertEqual(msg, "")
+
     def test_profile_save_and_switch(self):
         with tempfile.TemporaryDirectory() as td:
             self.gui.v_path.set(td)

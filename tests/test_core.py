@@ -168,6 +168,13 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg.url(), "http://192.168.1.9:5000/files/")
         self.assertIn("--path-prefix", cfg.command_line())
 
+    def test_ipv6_url_is_bracketed(self):
+        """IPv6 字面量在 URL 里必须带方括号，否则生成非法地址。"""
+        cfg = ServerConfig(share_path="/tmp", bind="::1", port=5000)
+        self.assertEqual(cfg.url(), "http://[::1]:5000/")
+        cfg.bind = "[::1]"
+        self.assertEqual(cfg.url(), "http://[::1]:5000/")
+
     def test_persist(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "config.json"
@@ -186,7 +193,25 @@ class PortTest(unittest.TestCase):
         port = srv.getsockname()[1]
         try:
             self.assertTrue(port_in_use(port))
+            # 连续探测必须稳定：Windows 上 connect_ex 第二次会失效，
+            # 导致 find_free_port() 又把同一个端口推荐回来。
+            self.assertTrue(port_in_use(port), "连续探测结果应稳定")
             self.assertNotEqual(find_free_port(port), port)
+        finally:
+            srv.close()
+
+    def test_ipv6_in_use_and_free(self):
+        try:
+            srv = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+            srv.bind(("::1", 0))
+            srv.listen(1)
+        except OSError:
+            self.skipTest("本机不支持 IPv6")
+        port = srv.getsockname()[1]
+        try:
+            self.assertTrue(port_in_use(port, "::1"))
+            self.assertTrue(port_in_use(port, "[::1]"), "应兼容方括号写法")
+            self.assertNotEqual(find_free_port(port, "::1"), port)
         finally:
             srv.close()
 

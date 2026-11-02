@@ -105,15 +105,22 @@ class ServerConfig:
 
     def display_host(self) -> str:
         """0.0.0.0 之类通配地址在展示/打开浏览器时换成具体 IP。"""
-        if self.bind in ("0.0.0.0", "::", "[::]", ""):
+        host = self.bind.strip()
+        if host.startswith("[") and host.endswith("]"):
+            host = host[1:-1]
+        if host in ("0.0.0.0", "::", ""):
             from .netutil import local_ips
             return local_ips()[0] if local_ips() else "127.0.0.1"
-        return self.bind
+        return host
 
     def url(self) -> str:
         scheme = "https" if self.use_https else "http"
         path = normalize_prefix(self.path_prefix)
-        return f"{scheme}://{self.display_host()}:{self.port}{path}/"
+        host = self.display_host()
+        # IPv6 字面量在 URL 里必须加方括号，否则 http://::1:5000/ 是非法格式
+        if ":" in host:
+            host = f"[{host}]"
+        return f"{scheme}://{host}:{self.port}{path}/"
 
     # ---------- 校验 ----------
     def validate(self) -> list[str]:

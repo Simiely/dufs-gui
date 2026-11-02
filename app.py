@@ -69,7 +69,9 @@ class DufsGui(tk.Tk):
     def _build_vars(self) -> None:
         self.v_path = tk.StringVar(value="")
         self.v_bind = tk.StringVar(value="127.0.0.1")
-        self.v_port = tk.IntVar(value=5000)
+        # 用字符串输入：IntVar 在清空/输入非数字时 .get() 会抛 TclError，
+        # 而 v_port 绑了 trace，用户在编辑框里删字就会触发错误弹窗。
+        self.v_port = tk.StringVar(value="5000")
         self.v_prefix = tk.StringVar(value="")
         self.v_upload = tk.BooleanVar(value=True)
         self.v_delete = tk.BooleanVar(value=False)
@@ -95,11 +97,26 @@ class DufsGui(tk.Tk):
                   self.v_custom_ui, self.v_assets_dir):
             v.trace_add("write", lambda *_: self._refresh_preview())
 
+    def port_from_form(self) -> tuple[int | None, str]:
+        """解析端口输入；无效时返回可读提示，不在编辑过程中抛异常。"""
+        raw = str(self.v_port.get() or "").strip()
+        if not raw:
+            return None, "端口不能为空"
+        try:
+            port = int(raw)
+        except ValueError:
+            return None, "端口必须是 1-65535 的整数"
+        if not 1 <= port <= 65535:
+            return None, "端口需在 1-65535 之间"
+        return port, ""
+
     def current_config(self) -> ServerConfig:
+        port, _ = self.port_from_form()
         return ServerConfig(
             share_path=self.v_path.get().strip(),
             bind=self.v_bind.get().strip() or "127.0.0.1",
-            port=int(self.v_port.get() or 5000),
+            # 编辑过程中允许暂时非法；用 5000 占位，提交时由 port_from_form 报错
+            port=port if port is not None else 5000,
             path_prefix=self.v_prefix.get().strip(),
             allow_upload=self.v_upload.get(),
             allow_delete=self.v_delete.get(),
@@ -120,7 +137,7 @@ class DufsGui(tk.Tk):
     def load_to_form(self, cfg: ServerConfig) -> None:
         self.v_path.set(cfg.share_path)
         self.v_bind.set(cfg.bind)
-        self.v_port.set(cfg.port)
+        self.v_port.set(str(cfg.port))
         self.v_prefix.set(cfg.path_prefix)
         self.v_upload.set(cfg.allow_upload)
         self.v_delete.set(cfg.allow_delete)
@@ -597,12 +614,18 @@ class DufsGui(tk.Tk):
         self._refresh_preview()
 
     def _check_port(self) -> None:
-        port = int(self.v_port.get() or 0)
-        if port_in_use(port):
-            free = find_free_port(port)
+        port, err = self.port_from_form()
+        if err:
+            messagebox.showwarning("端口无效", err)
+            return
+        host = self.v_bind.get().strip() or "127.0.0.1"
+        if host in ("0.0.0.0", "::", "[::]"):
+            host = "127.0.0.1"
+        if port_in_use(port, host):
+            free = find_free_port(port, host)
             if messagebox.askyesno("端口已被占用",
                                    f"端口 {port} 已被占用，是否改用 {free}？"):
-                self.v_port.set(free)
+                self.v_port.set(str(free))
                 self._log(f"端口 {port} 被占用，已切换到 {free}")
         else:
             messagebox.showinfo("端口可用", f"端口 {port} 当前可用")
@@ -719,6 +742,9 @@ class DufsGui(tk.Tk):
     def _start(self) -> None:
         cfg = self.current_config()
         errs = cfg.validate()
+        _, port_err = self.port_from_form()
+        if port_err:
+            errs.insert(0, port_err)
         if errs:
             messagebox.showerror("配置有误", "\n".join(errs))
             return
@@ -817,7 +843,7 @@ class DufsGui(tk.Tk):
             if not messagebox.askyesno("端口被占用",
                                        f"端口 {cfg.port} 已被占用，改用 {free} 启动？"):
                 return
-            self.v_port.set(free)
+            self.v_port.set(str(free))
             cfg.port = free
 
         if cfg.allow_symlink and not messagebox.askyesno(

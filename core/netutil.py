@@ -2,7 +2,20 @@
 
 from __future__ import annotations
 
+import errno
 import socket
+
+
+def _normalize_host(host: str) -> str:
+    """去掉 IPv6 方括号，空值回落到回环地址。"""
+    h = (host or "127.0.0.1").strip()
+    if h.startswith("[") and h.endswith("]"):
+        h = h[1:-1]
+    return h
+
+
+def _family(host: str) -> int:
+    return socket.AF_INET6 if ":" in host else socket.AF_INET
 
 
 def local_ips() -> list[str]:
@@ -31,12 +44,24 @@ def local_ips() -> list[str]:
 
 
 def port_in_use(port: int, host: str = "127.0.0.1") -> bool:
-    """端口是否已被占用（能连上即视为占用）。"""
+    """端口是否已被占用。
+
+    用 bind 探测而不是 connect：
+    - Windows 上 connect_ex 第一次成功后，紧接着第二次会返回失败，
+      导致 find_free_port() 把刚判定“被占用”的端口又推荐回来；
+    - bind 的行为与 dufs 真正启动时一致，连续调用结果稳定。
+    """
+    host = _normalize_host(host)
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(0.35)
-            return s.connect_ex((host, port)) == 0
-    except OSError:
+        with socket.socket(_family(host), socket.SOCK_STREAM) as s:
+            s.bind((host, int(port)))
+        return False
+    except OSError as e:
+        # EADDRINUSE / EACCES 表示当前用户无法在该地址监听；
+        # Windows 的 errno 本身是 10048/10013，winerror 兜底兼容。
+        if e.errno in (errno.EADDRINUSE, errno.EACCES) or \
+                getattr(e, "winerror", None) in (10048, 10013):
+            return True
         return False
 
 
