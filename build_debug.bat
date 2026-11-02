@@ -51,6 +51,10 @@ if not exist "bin\dufs.exe" (
 )
 set DUFS_GUI_MODE=onefile
 set DUFS_GUI_CONSOLE=1
+rem Wipe dist first: stale exes linger otherwise and get double-clicked
+if exist dist rmdir /s /q dist
+if exist build rmdir /s /q build
+
 python -m PyInstaller --noconfirm --clean DufsGui.spec
 if errorlevel 1 (echo [X] Build failed& goto :fail)
 echo.

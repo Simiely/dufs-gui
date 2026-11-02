@@ -53,6 +53,10 @@ python -m PyInstaller --version >nul 2>&1 && (
 echo.
 echo Building one-file exe, please wait 1-3 minutes ...
 set DUFS_GUI_MODE=onefile
+rem Wipe dist first: stale exes linger otherwise and get double-clicked
+if exist dist rmdir /s /q dist
+if exist build rmdir /s /q build
+
 python -m PyInstaller --noconfirm --clean DufsGui.spec
 
 if errorlevel 1 (

@@ -52,8 +52,8 @@ python main.py
 
 ## 版本
 
-当前 **v1.1.1**。版本号唯一定义在 [`core/__init__.py`](core/__init__.py)，
-界面标题与打包产物名（`dist\DufsGui-v1.1.1.exe`）都从它派生。
+当前 **v1.1.2**。版本号唯一定义在 [`core/__init__.py`](core/__init__.py)，
+界面标题与打包产物名（`dist\DufsGui-v1.1.2.exe`）都从它派生。
 
 ## 文档
 

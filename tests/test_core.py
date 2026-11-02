@@ -45,11 +45,43 @@ class UiRegressionTest(unittest.TestCase):
         self.assertNotIn("wraplength=", src.replace("wraplength=max", ""),
                          "命令预览标签不得写死 wraplength")
 
-    def test_check_indicator_is_custom_drawn(self):
-        """复选框必须走自绘位图，不能只靠 indicatorcolor（会静默失效）。"""
+    def test_checkbutton_not_ttk(self):
+        """复选框必须是 tk.Checkbutton + indicatoron=False，不能靠 ttk 配色。
+
+        ttk 的 indicatorcolor 会**静默失效**（不报错、就是没效果），
+        这正是之前"改了但界面没变化"的根因。
+        """
         src = (REPO / "core" / "theme.py").read_text(encoding="utf-8")
-        self.assertIn("_install_check_indicator", src)
-        self.assertIn("element_create", src)
+        self.assertIn("class ThemedCheckbutton(tk.Checkbutton)", src)
+        self.assertIn("indicatoron=False", src)
+        self.assertIn("selectimage=", src)
+
+    def test_app_uses_themed_checkbutton(self):
+        app = (REPO / "app.py").read_text(encoding="utf-8")
+        self.assertIn("ThemedCheckbutton(", app)
+        self.assertNotIn("cb = ttk.Checkbutton(", app)
+
+    def test_checkbox_contrast_meets_wcag(self):
+        """未选中描边 vs 面板、白勾 vs 选中底，都要 >=3:1 才看得清。"""
+        from core.theme import DARK, LIGHT
+
+        def lum(h):
+            h = h.lstrip("#")
+            r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+            f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+            return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+
+        def cr(a, b):
+            la, lb = lum(a), lum(b)
+            return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+        for c in (DARK, LIGHT):
+            self.assertGreaterEqual(
+                cr(c["check_border"], c["panel"]), 3.0,
+                f"未选中描边 {c['check_border']} vs 面板 {c['panel']} 对比度不足")
+            self.assertGreaterEqual(
+                cr("#ffffff", c["check_on"]), 3.0,
+                f"白勾 on {c['check_on']} 对比度不足")
 
     def test_tick_pixels_inside_box(self):
         """对勾像素必须落在 16x16 方框内部（1..14），否则会画到框外。"""
@@ -60,11 +92,26 @@ class UiRegressionTest(unittest.TestCase):
             self.assertTrue(1 <= y + 1 <= 14, f"加粗后的 y={y+1} 越界")
 
 
+class BatEncodingTest(unittest.TestCase):
+    """.bat 必须纯 ASCII：Windows 中文 cmd 按 GBK 读，UTF-8 中文会被当命令执行。
+
+    这条不是理论风险——它真实发生过两次，其中一次就是我在修 bug 时
+    顺手写了中文 rem 注释又踩了一遍。必须有测试拦着。
+    """
+
+    def test_all_bat_are_ascii(self):
+        bats = list(REPO.glob("*.bat"))
+        self.assertTrue(bats, "没找到任何 bat 文件")
+        for f in bats:
+            data = f.read_bytes()
+            bad = [b for b in data if b >= 128]
+            self.assertFalse(bad, f"{f.name} 含 {len(bad)} 个非 ASCII 字节")
+
+
 class VersionTest(unittest.TestCase):
     """版本号必须单一真源，且被 CHANGELOG 记录。"""
 
     def test_version_is_semver(self):
-        import re
         self.assertRegex(core_pkg.APP_VERSION, r"^\d+\.\d+\.\d+$",
                          "版本号应为 主.次.修订 形式")
 

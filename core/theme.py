@@ -103,6 +103,67 @@ class ThemedCombobox(ttk.Combobox):
             pass  # popdown 还没创建，忽略；option_add 会兜底
 
 
+class ThemedCheckbutton(tk.Checkbutton):
+    """复选框：**不用 ttk**。
+
+    为什么不用 ttk.Checkbutton：
+      - `indicatorcolor` 在部分平台**静默失效**（不报错，就是没效果）
+      - `element_create` + `layout` 替换指示器在主题切换时不稳定，且失败时无声
+    改用具经多方验证的做法（Stack Overflow #58559865 已采纳答案 / w3resource 教程 /
+    pc-app-development 官方文档）：**tk.Checkbutton + indicatoron=False +
+    image/selectimage 自绘图片**。完全绕开 ttk 主题机制，深浅色下都必然可见。
+    """
+
+    _INSTANCES: list["ThemedCheckbutton"] = []
+
+    def __init__(self, master=None, bg_key: str = "bg", **kw):
+        super().__init__(master, **kw)
+        self._bg_key = bg_key
+        self._imgs: list = []
+        ThemedCheckbutton._INSTANCES.append(self)
+        self.configure(
+            indicatoron=False,      # 关掉系统指示器，改用我们自己的图片
+            borderwidth=0,
+            highlightthickness=0,
+            relief="flat",
+            padx=2, pady=2,
+            compound="left",        # 图在左、文字在右
+            anchor="w",
+        )
+        self.apply_colors(palette(_current_dark()))
+
+    def apply_colors(self, c: dict) -> None:
+        bg = c.get(self._bg_key, c["bg"])
+        un = _make_box_image(c["field"], c["check_border"], None)
+        ch = _make_box_image(c["check_on"], c["check_on"], c["accent_fg"])
+        self._imgs = [un, ch]       # 必须长期持有，否则被 GC 后图片变空白
+        self.configure(
+            image=un,
+            selectimage=ch,
+            bg=bg,
+            fg=c["fg"],
+            activebackground=bg,
+            activeforeground=c["fg"],
+            selectcolor=bg,
+        )
+
+    def destroy(self):
+        try:
+            ThemedCheckbutton._INSTANCES.remove(self)
+        except ValueError:
+            pass
+        super().destroy()
+
+
+def refresh_all_checkbuttons(c: dict) -> None:
+    """主题切换后刷新所有复选框图片与配色。"""
+    for w in list(ThemedCheckbutton._INSTANCES):
+        try:
+            w.apply_colors(c)
+        except Exception:
+            pass
+
+
 def _current_dark() -> bool:
     try:
         from .app_state import DARK  # 避免循环导入
@@ -148,6 +209,10 @@ DARK = {
     "border": "#333a45",
     "accent": "#4f9cf9",
     "accent_fg": "#ffffff",
+    # 选中态方框填充：与白勾对比度 4.63:1（原 #4f9cf9 只有 2.82:1，勾看不清）
+    "check_on": "#1f6feb",
+    # 未选中方框描边：与面板底色 #23272e 对比度 5.0:1（原 #333a45 仅 1.31:1，等于隐形）
+    "check_border": "#8b96a5",
     "ok": "#3fb950",
     "warn": "#d9a441",
     "danger": "#e05c5c",
@@ -163,6 +228,8 @@ LIGHT = {
     "border": "#d3d9e0",
     "accent": "#2f6fdb",
     "accent_fg": "#ffffff",
+    "check_on": "#1257c9",
+    "check_border": "#767f8c",
     "ok": "#1f8f3d",
     "warn": "#a86a00",
     "danger": "#c92a2a",
@@ -216,20 +283,13 @@ def apply_theme(root: tk.Misc, dark: bool = True) -> dict[str, str]:
               selectforeground=[("readonly", c["fg"])])
     apply_option_db(root, c, ("Microsoft YaHei UI", 10))
 
-    # Checkbutton：配色方案（indicatorcolor）不可靠，改用自绘指示器
+    # Checkbutton 已改用 tk.Checkbutton（ThemedCheckbutton），不经过 ttk。
+    # 这里只保留 ttk 版本的基本配色，防止万一还有残留的 ttk.Checkbutton。
     for name, bg in (("TCheckbutton", c["bg"]), ("Card.TCheckbutton", c["panel"])):
         style.configure(name, background=bg, foreground=c["fg"], padding=(2, 3))
         style.map(name,
                   background=[("active", bg), ("disabled", bg)],
                   foreground=[("disabled", c["muted"]), ("active", c["fg"])])
-    try:
-        _install_check_indicator(style, c)
-    except Exception:
-        # 自绘失败（例如无真实 Tk）时退回配色方案，保证不崩
-        for name in ("TCheckbutton", "Card.TCheckbutton"):
-            style.configure(name, indicatorcolor=c["field"])
-            style.map(name, indicatorcolor=[("selected", c["accent"]),
-                                            ("!selected", c["field"])])
 
     style.configure("TRadiobutton", background=c["bg"], foreground=c["fg"],
                     indicatorcolor=c["field"], indicatorbackground=c["field"])
@@ -263,8 +323,9 @@ def apply_theme(root: tk.Misc, dark: bool = True) -> dict[str, str]:
     style.configure("Vertical.TScrollbar", background=c["card"],
                     troughcolor=c["field"], bordercolor=c["border"])
 
-    # 主题切换时把已存在 Combobox 的下拉列表也一起换色
+    # 主题切换时把已存在 Combobox 的下拉列表、复选框一起换色
     refresh_all_popdowns(c)
+    refresh_all_checkbuttons(c)
     return c
 
 

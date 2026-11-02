@@ -13,7 +13,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from core import dufsbin
-from core.theme import ThemedCombobox
+from core.theme import ThemedCheckbutton, ThemedCombobox
 from core.winpos import center_on_parent
 from core.config import (AppConfig, RENDER_MODES, ServerConfig, load_config,
                          save_config)
@@ -243,8 +243,8 @@ class DufsGui(tk.Tk):
             (self.v_custom_ui, "网页美化界面", "替换 dufs 默认页面样式（自研皮肤，不影响功能）"),
         ]
         for i, (var, text, hint) in enumerate(items):
-            cb = ttk.Checkbutton(box, text=text, variable=var,
-                                 command=lambda v=var, t=text: self._on_perm_change(v, t))
+            cb = ThemedCheckbutton(box, text=text, variable=var, bg_key="panel",
+                                   command=lambda v=var, t=text: self._on_perm_change(v, t))
             cb.grid(row=i, column=0, sticky="w")
             ttk.Label(box, text=hint, style="Muted.TLabel").grid(row=i, column=1, sticky="w",
                                                                 padx=(10, 0))
@@ -337,9 +337,9 @@ class DufsGui(tk.Tk):
         c1.grid(row=2, column=1, sticky="w", padx=8, pady=(10, 0))
 
         # 日志
-        cblog = ttk.Checkbutton(outer, text="同时保存日志到文件",
-                                variable=self.v_savelog,
-                                command=self._on_savelog_change)
+        cblog = ThemedCheckbutton(outer, text="同时保存日志到文件", bg_key="panel",
+                                  variable=self.v_savelog,
+                                  command=self._on_savelog_change)
         cblog.grid(row=3, column=0, columnspan=3, sticky="w", pady=(14, 0))
         e2 = ttk.Entry(outer, textvariable=self.v_logpath)
         e2.grid(row=4, column=1, sticky="ew", padx=8, pady=(4, 0))
@@ -405,18 +405,17 @@ class DufsGui(tk.Tk):
         _bind_wheel(outer)
         canvas.bind("<MouseWheel>", _wheel)
 
-        # 按内容实测高度定尺寸，而不是写死——行数一变就不会再被裁切
-        win.update_idletasks()
+        # 固定一个足够大的尺寸，再用滚动兜底。
+        # 不能依赖 winfo_reqheight()：窗口此时是 withdrawn 状态，Tk 不会计算
+        # 子控件几何，reqheight 常常返回 1，算出来的高度反而更小、裁得更狠。
         try:
-            req_h = outer.winfo_reqheight()
-            req_w = outer.winfo_reqwidth()
+            sh = win.winfo_screenheight()
+            sw = win.winfo_screenwidth()
         except Exception:
-            req_h, req_w = 700, 660
-
-        pad_v = 24                                   # 上下留白
-        h = max(420, min(req_h + pad_v, win.winfo_screenheight() - 120))
-        w = max(620, min(req_w + 28, win.winfo_screenwidth() - 80))
-        win.minsize(min(600, w), min(360, h))
+            sh, sw = 1080, 1920
+        h = max(520, min(760, sh - 120))
+        w = max(640, min(720, sw - 80))
+        win.minsize(min(640, w), min(480, h))
         win.geometry(f"{w}x{h}")
         center_on_parent(win, self, w, h)
         _sync_scroll()
@@ -514,6 +513,12 @@ class DufsGui(tk.Tk):
                                 selectbackground=c["accent"])
         self.dot.configure(bg=c["panel"], fg=c["muted"])
         self.btn_theme.configure(text="深色" if not self.dark else "浅色")
+        # 写一行可见日志：用户能直接确认主题到底生效了没（排"主题没变化"的关键证据）
+        try:
+            self._log("主题已应用：%s（ttk 主题 %s）"
+                      % ("深色" if self.dark else "浅色", ttk.Style(self).theme_use()))
+        except Exception:
+            pass
         # 高级设置若正开着，也要跟着换主题（Canvas 是原生 tk 控件，style 管不到）
         if self.adv_win is not None and self.adv_win.winfo_exists():
             try:

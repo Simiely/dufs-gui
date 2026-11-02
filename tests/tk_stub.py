@@ -199,6 +199,23 @@ class PhotoImage:
         pass
 
 
+class Checkbutton(Widget):
+    """tk.Checkbutton 桩。"""
+
+    def __init__(self, master=None, **kw):
+        super().__init__(master, **kw)
+        self.kw = kw
+
+    def select(self):
+        pass
+
+    def deselect(self):
+        pass
+
+    def toggle(self):
+        pass
+
+
 class Canvas(Widget):
     """够用的 Canvas 桩：只支持 create_window / itemconfigure / bbox / yview。"""
 
@@ -351,6 +368,7 @@ def install() -> None:
     tk.Tk = Tk
     tk.Toplevel = Toplevel
     tk.Canvas = Canvas
+    tk.Checkbutton = Checkbutton
     tk.PhotoImage = PhotoImage
     tk.Frame = Widget
     tk.Label = Widget

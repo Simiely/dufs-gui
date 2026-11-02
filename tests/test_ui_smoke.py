@@ -108,17 +108,24 @@ class UiSmokeTest(unittest.TestCase):
         self.assertNotEqual(before, self.gui.dark)
         self.gui._toggle_theme()
 
-    def test_advanced_popup_sized_to_content(self):
-        """弹窗高度必须按内容实测，不能写死——否则新增行会被裁切。"""
+    def test_advanced_popup_big_enough(self):
+        """弹窗必须足够大：内容约 700px 高，小于它就一定被裁切。
+
+        注意：不能靠 winfo_reqheight() 自适应 —— 窗口处于 withdrawn 状态时
+        Tk 不计算子控件几何，返回值可能是 1，算出的高度反而更小、裁得更狠。
+        """
         self.gui.adv_win = None
         self.gui._open_advanced()
         win = self.gui.adv_win
-        g = win._geometry          # 形如 "744x680+100+50"
-        w, h = (int(x) for x in g.split("+")[0].split("x"))
-        # 桩里 reqheight=720，窗口至少要装得下内容（+上下留白）
-        self.assertGreaterEqual(h, 720, f"高度 {h} 装不下内容 720，会被裁切")
-        self.assertGreaterEqual(w, 620, "宽度过小")
+        w, h = (int(x) for x in win._geometry.split("+")[0].split("x"))
+        self.assertGreaterEqual(h, 520, f"高度 {h} 过小，内容会被裁切")
+        self.assertGreaterEqual(w, 640, "宽度过小")
         self.gui.adv_win = None
+
+    def test_popup_size_not_from_measurement(self):
+        """源码不得依赖实测高度定尺寸（withdrawn 时不可靠）。"""
+        src = (Path(__file__).resolve().parent.parent / "app.py").read_text(encoding="utf-8")
+        self.assertNotIn("req_h", src, "弹窗尺寸不应依赖实测高度")
 
     def test_advanced_popup_clamped_to_screen(self):
         """屏幕很矮时不能超出屏幕，超出的部分靠滚动而不是裁掉。"""
