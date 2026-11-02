@@ -1,6 +1,22 @@
 # CHANGELOG
 
 本项目版本格式：`主版本.次版本.修订`，按版本倒序分节。
+版本号唯一定义在 [`core/__init__.py`](core/__init__.py) 的 `APP_VERSION`，界面标题与打包产物名均从它派生，不要在多处改。
+
+## [1.1.0] - 2026-11-02
+
+### 变更
+
+- **版本号收归单一真源**：`core/__init__.py` 的 `APP_VERSION`。
+  界面标题、打包产物名（`DufsGui-v1.1.0.exe`）全部从它派生，避免多处不同步
+- **打包产物名带版本号**：`dist\DufsGui-v1.1.0.exe`，便于区分新旧版本
+- `build.bat` / `build_debug.bat` 改为通配定位产物，自动适配带版本号的 exe
+
+### 文档
+
+- 按 knowledge-base 单项目规范建立四件套（README / AGENTS / DEVELOPMENT / CHANGELOG）
+- README 原 252 行超 150 行阈值 → 精简为门面 + 索引，详情移入 `docs/使用指南.md`
+- 新增 `docs/问题记录/` 六篇，一坑一篇
 
 ## [1.0.0] - 2026-11-02（commit `e4b8cac`）
 

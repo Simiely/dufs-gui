@@ -26,7 +26,20 @@ COLLECT_TK = os.environ.get("DUFS_GUI_COLLECT_TK") == "1"
 MODE = os.environ.get("DUFS_GUI_MODE", "onefile").lower()
 ONEDIR = MODE == "onedir"
 
-NAME = "DufsGui-debug" if DEBUG else "DufsGui"
+# 版本号从 core/__init__.py 读，避免两处不同步
+def _read_version() -> str:
+    import re
+    src = os.path.join(ROOT, "core", "__init__.py")
+    try:
+        with open(src, encoding="utf-8") as f:
+            m = re.search(r'APP_VERSION\s*=\s*["\']([^"\']+)["\']', f.read())
+        return m.group(1) if m else "0.0.0"
+    except OSError:
+        return "0.0.0"
+
+
+VER = _read_version()
+NAME = f"DufsGui-v{VER}" + ("-debug" if DEBUG else "")
 
 DUFS_NAME = "dufs.exe" if IS_WIN else "dufs"
 DUFS = os.path.join(ROOT, "bin", DUFS_NAME)

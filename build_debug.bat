@@ -5,11 +5,11 @@ cd /d "%~dp0"
 echo %CMDCMDLINE% | find /i "%~nx0" >nul && set "DBLCLK=1"
 
 set "LOGF=%TEMP%\dufs_gui_debug.txt"
-set "EXE=dist\DufsGui-debug.exe"
+set "EXE="
 
 echo ============================================
 echo   Dufs GUI - diagnostic build (ONE FILE)
-echo   Output: a single dist\DufsGui-debug.exe
+echo   Output: a single dist\DufsGui-vX.Y.Z-debug.exe
 echo   Console is kept ON so errors stay visible
 echo ============================================
 echo.
@@ -57,7 +57,9 @@ echo.
 if defined DBLCLK pause
 
 echo ---------- [3/4] selftest ----------
-if not exist "%EXE%" (echo [X] Not found: %EXE%& goto :fail)
+for %%f in ("dist\DufsGui*.exe") do set "EXE=%%f"
+if not defined EXE (echo [X] no exe found in dist\& goto :fail)
+echo exe: %EXE%
 for %%f in ("%EXE%") do echo size: %%~zf bytes
 "%EXE%" --selftest > "%LOGF%" 2>&1
 set RC1=!ERRORLEVEL!

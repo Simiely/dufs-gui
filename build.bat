@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 echo ============================================
 echo   Dufs GUI - build ONE FILE
-echo   Output: a single dist\DufsGui.exe
+echo   Output: a single dist\DufsGui-vX.Y.Z.exe
 echo   (no console window)
 echo ============================================
 echo.
@@ -61,17 +61,19 @@ if errorlevel 1 (
   goto :done
 )
 
-if not exist "dist\DufsGui.exe" (
-  echo [X] dist\DufsGui.exe not found
+set "EXE="
+for %%f in ("dist\DufsGui*.exe") do set "EXE=%%f"
+if not defined EXE (
+  echo [X] no exe found in dist\
   goto :done
 )
 
 echo.
 echo ============================================
 echo   Done
-echo   Output : %CD%\dist\DufsGui.exe
-for %%f in ("dist\DufsGui.exe") do echo   Size   : %%~zf bytes
-echo   Time   : %%~tf
+echo   Output : %CD%\%EXE%
+for %%g in ("%EXE%") do echo   Size   : %%~zg bytes
+for %%g in ("%EXE%") do echo   Time   : %%~tg
 echo.
 echo   Double-click that NEW file, not an old one.
 echo   If it flashes and dies, run build_debug.bat first.

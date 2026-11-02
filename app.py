@@ -22,7 +22,7 @@ from core.server import DufsProcess
 from core.theme import apply_theme, enable_windows_dark_titlebar, palette
 
 APP_NAME = "Dufs 文件共享"
-APP_VERSION = "1.0.0"
+from core import APP_VERSION  # 单一真源，见 core/__init__.py
 
 
 def ui_font(size: int = 10, weight: str = "normal") -> tuple:

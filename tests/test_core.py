@@ -16,6 +16,11 @@ sys_path = Path(__file__).resolve().parents[1]
 import sys
 sys.path.insert(0, str(sys_path))
 
+REPO = Path(__file__).resolve().parent.parent
+
+sys.path.insert(0, str(REPO))
+
+import core as core_pkg  # noqa: E402
 from core import dufsbin, server  # noqa: E402
 from core.config import (AppConfig, ServerConfig, load_config,  # noqa: E402
                          normalize_prefix, save_config)
@@ -28,6 +33,31 @@ class PrefixTest(unittest.TestCase):
         self.assertEqual(normalize_prefix("/files/"), "/files")
         self.assertEqual(normalize_prefix(""), "")
         self.assertEqual(normalize_prefix("  a/b "), "/a/b")
+
+
+class VersionTest(unittest.TestCase):
+    """版本号必须单一真源，且被 CHANGELOG 记录。"""
+
+    def test_version_is_semver(self):
+        import re
+        self.assertRegex(core_pkg.APP_VERSION, r"^\d+\.\d+\.\d+$",
+                         "版本号应为 主.次.修订 形式")
+
+    def test_changelog_has_current_version(self):
+        txt = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn(f"[{core_pkg.APP_VERSION}]", txt,
+                      f"CHANGELOG 缺少 {core_pkg.APP_VERSION} 的版本节")
+
+    def test_app_uses_shared_version(self):
+        """app.py 不得自己写死版本号，必须引用 core.APP_VERSION。"""
+        src = (REPO / "app.py").read_text(encoding="utf-8")
+        self.assertIn("from core import APP_VERSION", src)
+        self.assertNotIn('APP_VERSION = "', src,
+                        "app.py 里仍有字面量版本号，应改为引用 core")
+
+    def test_spec_reads_version_from_core(self):
+        spec = (REPO / "DufsGui.spec").read_text(encoding="utf-8")
+        self.assertIn("_read_version", spec, "spec 应从 core 读版本号")
 
 
 class ConfigTest(unittest.TestCase):

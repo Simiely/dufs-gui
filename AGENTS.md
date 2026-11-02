@@ -1,6 +1,6 @@
 # AGENTS.md · 项目规则
 
-> 📌 **文档基线**：2026-11-02（commit `e4b8cac`）完成四件套重写
+> 📌 **文档基线**：2026-11-02（commit 待推送后回填）v1.1.0 版本号收归单一真源
 > **更新文档/代码后，请更新此行**（日期 + 新 commit hash），并在 CHANGELOG 追加版本
 
 ## 技术栈
@@ -26,6 +26,12 @@
 - `bin/dufs.exe` 不入库（体积大 + 平台相关），用 `tools/fetch_dufs.py` 获取
 - 所有 bat 纯 ASCII；README 等 Markdown 用 UTF-8
 - `console=False` 时异常会静默消失，任何崩溃都要能被 `core/crashlog.py` 捕获落盘
+
+## 版本管理
+
+版本号**唯一定义在 `core/__init__.py` 的 `APP_VERSION`**，界面标题与打包产物名
+（`dist\DufsGui-vX.Y.Z.exe`）都从它派生。**改版本只改这一处**，
+不要去改 app.py 或 spec 里的字面量。
 
 ## 常用命令
 
