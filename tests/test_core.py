@@ -596,16 +596,23 @@ class SkinConfigTest(unittest.TestCase):
         self.assertIn("--assets", ServerConfig(share_path=".", custom_ui=True).to_args())
         self.assertNotIn("--assets", ServerConfig(share_path=".", custom_ui=False).to_args())
 
-    def test_downgrade_must_not_persist(self):
-        """自动降级只允许改内存，不得调用 _save() 写盘。"""
+    def test_downgrade_must_not_touch_form_value(self):
+        """自动降级只能改本次启动的临时 cfg，不能改界面变量。
+
+        界面变量会在 _start() 末尾被 _save() 持久化；改成 False 就等于
+        “用户主动关闭”，下次载入不会再自愈。写盘路径由
+        test_ui_smoke.SkinFallbackPersistenceTest 做端到端覆盖。
+        """
         src = (REPO / "app.py").read_text(encoding="utf-8")
         i = src.find("尝试不带自定义网页皮肤重新启动")
         self.assertGreater(i, 0, "未找到自动降级代码段")
         seg = src[i:i + 900]
         code = "\n".join(l for l in seg.splitlines()
                           if not l.strip().startswith("#"))
+        self.assertNotIn("self.v_custom_ui", code,
+                        "自动降级不得修改界面变量，否则会被末尾 _save() 持久化")
         self.assertNotIn("_save()", code,
-                        "自动降级段内不得调用 _save()，否则一次失败永久关闭皮肤")
+                        "自动降级段内不得调用 _save()")
 
     def test_webui_dir_only_looks_at_assets(self):
         """webui_dir 只认 assets/，不再有 webui/ 死分支。"""

@@ -840,10 +840,9 @@ class DufsGui(tk.Tk):
             retried = False
             if "--assets" in args and cfg.custom_ui:
                 self._log("首次启动未就绪，尝试不带自定义网页皮肤重新启动…")
-                # 只在本次会话内关闭，**不调用 _save()**。
-                # 旧版在这里写盘，导致一次启动失败就把 custom_ui=false 永久存进
-                # config.json，之后即使代码修好也一直读回 false —— 皮肤再也不会启用。
-                self.v_custom_ui.set(False)
+                # 只改本次启动用的临时配置，**不能动界面变量**：
+                # 界面变量会在 _start() 末尾被 _save() 持久化，一旦改成 False，
+                # 就会被当成“用户主动关闭”写进 config.json，下次启动不再自愈。
                 cfg.custom_ui = False
                 args = cfg.to_args()
                 try:
@@ -853,11 +852,11 @@ class DufsGui(tk.Tk):
                     retried = False
 
             if retried:
-                self._log("已不带自定义皮肤启动成功（网页美化已自动关闭）")
+                self._log("已不带自定义皮肤启动成功（本次临时使用 dufs 默认界面，不写盘）")
                 messagebox.showwarning(
                     "已降级启动",
-                    "自定义网页皮肤导致 dufs 无法启动，已自动关闭该功能。\n"
-                    "服务现在可以正常使用，但网页会恢复 dufs 默认样式。")
+                    "自定义网页皮肤导致 dufs 无法启动，本次已临时使用 dufs 默认界面。\n"
+                    "该调整不会写入配置，下次开启仍会尝试自定义皮肤。")
                 self._refresh_preview()
             else:
                 self.proc.stop()

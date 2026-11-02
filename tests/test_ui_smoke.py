@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -17,6 +20,8 @@ import tk_stub  # noqa: E402
 tk_stub.install()
 
 import app as app_module  # noqa: E402
+from core import dufsbin  # noqa: E402
+from core.netutil import find_free_port  # noqa: E402
 
 
 class UiSmokeTest(unittest.TestCase):
@@ -148,6 +153,64 @@ class UiSmokeTest(unittest.TestCase):
     def test_command_preview(self):
         self.gui._refresh_preview()
         self.assertIn("等效命令", self.gui.lbl_cmd["text"])
+
+
+class SkinFallbackPersistenceTest(unittest.TestCase):
+    """端到端覆盖“降级后仍会执行统一保存”的路径。
+
+    旧测试只扫描降级代码段 900 字符，看不到 _start() 末尾的 _save()，
+    因此没抓到“运行时降级把 custom_ui=false 写盘”的回归。
+    """
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="dufsgui-fallback-")
+        self.share = tempfile.mkdtemp(prefix="dufsgui-share-")
+        self.env_patch = mock.patch.dict(
+            os.environ, {"DUFS_GUI_HOME": self.home, "DUFS_BIN": ""})
+        self.env_patch.start()
+        self.ensure_patch = mock.patch.object(
+            dufsbin, "ensure_dufs", return_value=Path(sys.executable))
+        self.ensure_patch.start()
+        self.gui = app_module.DufsGui()
+
+        self.calls = []
+
+        def fake_start(binary, args, cwd=None):
+            self.calls.append(list(args))
+
+        def fake_wait(port, host, timeout=8):
+            # 第一次（带 --assets）失败，第二次（不带）成功
+            return "--assets" not in self.calls[-1]
+
+        self.gui.proc.start = fake_start
+        self.gui.proc.wait_ready = fake_wait
+        self.gui.proc.stop = lambda *a, **k: None
+
+    def tearDown(self):
+        self.gui.destroy()
+        self.ensure_patch.stop()
+        self.env_patch.stop()
+        shutil.rmtree(self.home, ignore_errors=True)
+        shutil.rmtree(self.share, ignore_errors=True)
+
+    def test_fallback_saves_but_keeps_custom_ui(self):
+        self.gui.v_path.set(self.share)
+        self.gui.v_port.set(find_free_port(5200))
+        self.gui.v_custom_ui.set(True)
+        self.gui._start()
+
+        self.assertEqual(len(self.calls), 2, "应发生一次带皮肤启动 + 一次降级重试")
+        self.assertIn("--assets", self.calls[0])
+        self.assertNotIn("--assets", self.calls[1])
+
+        cfg_path = Path(self.home) / "config.json"
+        self.assertTrue(cfg_path.is_file(), "降级后仍应执行统一保存动作")
+        saved = json.loads(cfg_path.read_text(encoding="utf-8"))["current_config"]
+        self.assertTrue(saved["custom_ui"], "运行时降级不得把 false 写进配置")
+        self.assertNotIn("_user_set_custom_ui", saved,
+                         "运行时降级不得留下“用户主动关闭”的标记")
+        self.assertTrue(self.gui.v_custom_ui.get(),
+                        "界面变量应保持原值，供下次启动继续尝试皮肤")
 
 
 if __name__ == "__main__":
