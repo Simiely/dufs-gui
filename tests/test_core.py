@@ -11,6 +11,7 @@ import socket
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys_path = Path(__file__).resolve().parents[1]
 import sys
@@ -242,28 +243,41 @@ class DufsBinTest(unittest.TestCase):
                 else:
                     os.environ["DUFS_GUI_HOME"] = old
 
-    @unittest.skipUnless((sys_path / "bin" / "dufs").exists()
-                         or (sys_path / "bin" / "dufs.exe").exists(),
-                         "需要 bin/ 下有内置 dufs")
     def test_builtin_takes_precedence(self):
-        """内置 dufs 优先于已落盘副本，这样升级 GUI 能覆盖旧版本。"""
-        with tempfile.TemporaryDirectory() as home:
-            old = os.environ.get("DUFS_GUI_HOME")
-            os.environ["DUFS_GUI_HOME"] = home
-            try:
-                stale = Path(home) / "bin" / ("dufs.exe" if os.name == "nt" else "dufs")
-                stale.parent.mkdir(parents=True, exist_ok=True)
-                stale.write_bytes(b"stale")
-                stale.chmod(0o755)
+        """内置 dufs 优先于已落盘副本，这样升级 GUI 能覆盖旧版本。
 
-                found = dufsbin.find_dufs()
-                self.assertIsNotNone(found)
-                self.assertNotEqual(found, stale, "内置版本应覆盖已落盘的旧副本")
+        不依赖仓库里是否真有 bin/dufs.exe：用临时目录模拟内置资源，
+        这样 Windows / Linux 都能稳定跑，也允许把伪造的 bin/dufs 移出 Git。
+        """
+        with tempfile.TemporaryDirectory() as home, \
+                tempfile.TemporaryDirectory() as res:
+            builtin = Path(res) / "bin" / dufsbin.BINARY_NAME
+            builtin.parent.mkdir(parents=True, exist_ok=True)
+            builtin.write_bytes(b"builtin")
+            builtin.chmod(0o755)
+
+            stale = Path(home) / "bin" / dufsbin.BINARY_NAME
+            stale.parent.mkdir(parents=True, exist_ok=True)
+            stale.write_bytes(b"stale")
+            stale.chmod(0o755)
+
+            old_home = os.environ.get("DUFS_GUI_HOME")
+            old_bin = os.environ.get("DUFS_BIN")
+            os.environ["DUFS_GUI_HOME"] = home
+            os.environ.pop("DUFS_BIN", None)
+            try:
+                with mock.patch.object(dufsbin, "resource_dir", return_value=Path(res)):
+                    found = dufsbin.find_dufs()
+                self.assertEqual(found, builtin, "应优先返回临时目录里的内置 dufs")
             finally:
-                if old is None:
+                if old_home is None:
                     os.environ.pop("DUFS_GUI_HOME", None)
                 else:
-                    os.environ["DUFS_GUI_HOME"] = old
+                    os.environ["DUFS_GUI_HOME"] = old_home
+                if old_bin is None:
+                    os.environ.pop("DUFS_BIN", None)
+                else:
+                    os.environ["DUFS_BIN"] = old_bin
 
     def test_embedded_fallback(self):
         """无内置二进制时，从 base64 内嵌数据释放（tools/embed_dufs.py 的产物）。"""

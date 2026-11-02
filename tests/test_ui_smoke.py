@@ -71,13 +71,15 @@ class UiSmokeTest(unittest.TestCase):
             self.assertEqual(self.gui.v_path.get(), td)
 
     def test_start_stop_flow(self):
-        """用一个会真正监听端口的假 dufs，跑通开启→运行→停止全流程。"""
-        from core.netutil import find_free_port
+        """用一个会真正监听端口的假 dufs，跑通开启→运行→停止全流程。
 
+        用当前 Python 解释器直接执行 .py 假服务，而不是依赖 shebang 脚本：
+        Windows 的 Popen 不能直接执行无扩展名的文本文件，这条测试以前只在
+        POSIX 上成立。ensure_dufs 在这里注入为 sys.executable。
+        """
         with tempfile.TemporaryDirectory() as td:
-            fake = Path(td) / "dufs"
+            fake = Path(td) / "fake_dufs.py"
             fake.write_text(
-                "#!/usr/bin/env python3\n"
                 "import sys, http.server, socketserver\n"
                 "args = sys.argv[1:]\n"
                 "port = int(args[args.index('-p') + 1]) if '-p' in args else 5000\n"
@@ -89,26 +91,25 @@ class UiSmokeTest(unittest.TestCase):
                 "    def log_message(self, *a): pass\n"
                 "socketserver.TCPServer(('127.0.0.1', port), H).serve_forever()\n",
                 encoding="utf-8")
-            fake.chmod(0o755)
 
-            os.environ["DUFS_BIN"] = str(fake)
-            self.gui.v_path.set(td)
+            self.gui.v_path.set(str(fake))
             self.gui.v_bind.set("127.0.0.1")
-            self.gui.v_port.set(find_free_port(5100))
+            self.gui.v_port.set(str(find_free_port(5100)))
             self.gui.v_prefix.set("files")
 
-            self.gui.btn_start.invoke()
-            self.assertTrue(self.gui.proc.running, "服务应处于运行状态")
-            self.assertTrue(self.gui.v_status.get().startswith("运行中"))
-            self.assertTrue(self.gui.v_url.get().endswith("/files/"))
-            self.assertEqual(self.gui.btn_start["state"], "disabled")
-            self.assertEqual(self.gui.btn_stop["state"], "normal")
+            with mock.patch.object(dufsbin, "ensure_dufs",
+                                   return_value=Path(sys.executable)):
+                self.gui.btn_start.invoke()
+                self.assertTrue(self.gui.proc.running, "服务应处于运行状态")
+                self.assertTrue(self.gui.v_status.get().startswith("运行中"))
+                self.assertTrue(self.gui.v_url.get().endswith("/files/"))
+                self.assertEqual(self.gui.btn_start["state"], "disabled")
+                self.assertEqual(self.gui.btn_stop["state"], "normal")
 
-            self.gui.btn_stop.invoke()
-            self.assertFalse(self.gui.proc.running)
-            self.assertEqual(self.gui.v_status.get(), "未启动")
-            self.assertEqual(self.gui.btn_start["state"], "normal")
-            os.environ.pop("DUFS_BIN", None)
+                self.gui.btn_stop.invoke()
+                self.assertFalse(self.gui.proc.running)
+                self.assertEqual(self.gui.v_status.get(), "未启动")
+                self.assertEqual(self.gui.btn_start["state"], "normal")
 
     def test_advanced_popup(self):
         """高级设置应弹出独立窗口，而不是在主界面展开。"""
