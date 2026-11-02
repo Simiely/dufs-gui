@@ -35,6 +35,31 @@ class PrefixTest(unittest.TestCase):
         self.assertEqual(normalize_prefix("  a/b "), "/a/b")
 
 
+class UiRegressionTest(unittest.TestCase):
+    """源码级回归：防止已修的显示 bug 再回来。"""
+
+    def test_no_hardcoded_wraplength(self):
+        """写死 wraplength 会让等效命令换行错乱（曾被截成 `--e`）。"""
+        src = (REPO / "app.py").read_text(encoding="utf-8")
+        self.assertNotIn("wraplength=760", src)
+        self.assertNotIn("wraplength=", src.replace("wraplength=max", ""),
+                         "命令预览标签不得写死 wraplength")
+
+    def test_check_indicator_is_custom_drawn(self):
+        """复选框必须走自绘位图，不能只靠 indicatorcolor（会静默失效）。"""
+        src = (REPO / "core" / "theme.py").read_text(encoding="utf-8")
+        self.assertIn("_install_check_indicator", src)
+        self.assertIn("element_create", src)
+
+    def test_tick_pixels_inside_box(self):
+        """对勾像素必须落在 16x16 方框内部（1..14），否则会画到框外。"""
+        from core.theme import _TICK
+        for x, y in _TICK:
+            self.assertTrue(1 <= x <= 13, f"对勾像素 x={x} 越界")
+            self.assertTrue(1 <= y <= 13, f"对勾像素 y={y} 越界")
+            self.assertTrue(1 <= y + 1 <= 14, f"加粗后的 y={y+1} 越界")
+
+
 class VersionTest(unittest.TestCase):
     """版本号必须单一真源，且被 CHANGELOG 记录。"""
 

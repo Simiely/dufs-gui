@@ -189,6 +189,16 @@ class Toplevel(Widget):
         return self._alive
 
 
+class PhotoImage:
+    """桩：自绘复选框位图用。"""
+
+    def __init__(self, *a, **kw):
+        pass
+
+    def put(self, *a, **kw):
+        pass
+
+
 class Canvas(Widget):
     """够用的 Canvas 桩：只支持 create_window / itemconfigure / bbox / yview。"""
 
@@ -341,6 +351,7 @@ def install() -> None:
     tk.Tk = Tk
     tk.Toplevel = Toplevel
     tk.Canvas = Canvas
+    tk.PhotoImage = PhotoImage
     tk.Frame = Widget
     tk.Label = Widget
     tk.Button = Widget

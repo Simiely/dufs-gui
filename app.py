@@ -51,6 +51,7 @@ class DufsGui(tk.Tk):
 
         self.dufs_path: Path | None = dufsbin.find_dufs()
         self.adv_win: tk.Toplevel | None = None
+        self._adv_canvas: tk.Canvas | None = None
         self.config_widgets: list[tk.Widget] = []
 
         self._build_vars()
@@ -287,6 +288,7 @@ class DufsGui(tk.Tk):
         canvas = tk.Canvas(wrap, highlightthickness=0, borderwidth=0,
                            bg=self.colors["bg"])
         canvas.grid(row=0, column=0, sticky="nsew")
+        self._adv_canvas = canvas
         sb = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
         sb.grid(row=0, column=1, sticky="ns")
         canvas.configure(yscrollcommand=sb.set)
@@ -386,6 +388,7 @@ class DufsGui(tk.Tk):
 
         def on_close():
             self.adv_win = None
+            self._adv_canvas = None
             win.destroy()
 
         win.protocol("WM_DELETE_WINDOW", on_close)
@@ -467,8 +470,13 @@ class DufsGui(tk.Tk):
         footer.grid(row=2, column=0, sticky="ew")
         footer.columnconfigure(0, weight=1)
         self.lbl_cmd = ttk.Label(footer, text="", style="Muted.TLabel",
-                                 font=("Consolas", 9), wraplength=760, justify="left")
+                                 font=("Consolas", 9), justify="left", anchor="w")
         self.lbl_cmd.grid(row=0, column=0, sticky="w")
+        # 写死 wraplength 会与标签实际宽度不符：换行位置错乱，命令被截成怪样子。
+        # 改为按标签真实宽度自适应。
+        self.lbl_cmd.bind(
+            "<Configure>",
+            lambda e: self.lbl_cmd.configure(wraplength=max(160, e.width - 4)))
         self.btn_start = ttk.Button(footer, text="开启共享", style="Accent.TButton",
                                     command=self._start)
         self.btn_start.grid(row=0, column=1, rowspan=2, padx=(10, 0))
@@ -506,6 +514,16 @@ class DufsGui(tk.Tk):
                                 selectbackground=c["accent"])
         self.dot.configure(bg=c["panel"], fg=c["muted"])
         self.btn_theme.configure(text="深色" if not self.dark else "浅色")
+        # 高级设置若正开着，也要跟着换主题（Canvas 是原生 tk 控件，style 管不到）
+        if self.adv_win is not None and self.adv_win.winfo_exists():
+            try:
+                apply_theme(self.adv_win, self.dark)
+                self.adv_win.configure(bg=c["bg"])
+                if self._adv_canvas is not None:
+                    self._adv_canvas.configure(bg=c["bg"])
+            except Exception:
+                pass
+
         try:
             self.update_idletasks()
             enable_windows_dark_titlebar(self.winfo_id(), self.dark)

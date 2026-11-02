@@ -17,7 +17,11 @@
 3. **`--assets` 目录必须含 `index.html`**。dufs `src/args.rs` 的 `sanitize_assets_path` 会 `bail!`。只放 CSS 会让 dufs 拒绝启动。
 4. **Windows 上必须清理子进程的 DLL 搜索路径**。bootloader 用 `SetDllDirectoryW` 指向 `_MEIPASS`，该设置**被子进程继承**，外部 dufs.exe 可能加载到不兼容 DLL。`Popen` 前调 `SetDllDirectoryW(None)` 并从 PATH 剔除 `_MEIPASS`。
 5. **ttk.Combobox 的下拉列表是原生 tk.Listbox，不是 ttk 控件**。`ttk.Style` 无效，只能用 option database，且大小写敏感（`selectBackground` 的 B 必须大写）。运行时切主题还得用 `tk.eval` 直接刷。
-6. **clam 主题的对勾是硬编码深色**，改不了。深色背景上让选中态也是深色 = 完全看不见；必须让选中时方框填高亮色。
+6. **clam 主题的对勾是硬编码深色，且 `indicatorcolor` 会静默失效**（不报错，就是没效果）。
+   不要靠配色去调，直接**自绘 16x16 位图 + `element_create` 替换指示器**
+   （见 `core/theme.py` 的 `_install_check_indicator`）。自绘图片必须长期持有引用，否则被 GC 后变空白。
+7. **`ttk.Label` 不要写死 `wraplength`**。窗口宽度和可用宽度不一致时换行位置会错乱，
+   长文本被截得看不懂（等效命令曾显示成 `--e`）。改为 `<Configure>` 里按真实宽度自适应。
 
 ## 约定
 

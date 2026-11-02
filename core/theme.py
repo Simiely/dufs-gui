@@ -8,6 +8,54 @@ from tkinter import ttk
 # 已创建的 Combobox 实例，主题切换时需要逐个刷新下拉列表
 _COMBOS: list[ttk.Combobox] = []
 
+# ---------- 复选框：自绘指示器 ----------
+# 为什么不用 indicatorcolor：clam 的对勾是硬编码深色，而 indicatorcolor 在部分
+# 平台/版本上根本不生效（静默失效，不报错）。靠配色去"猜"不可靠。
+# 这里改为自绘 16x16 位图 + element_create 替换 Checkbutton.indicator，
+# 颜色完全由我们决定 —— 任何主题、任何平台下都必然可见。
+_ELEMENT_SEQ = [0]
+_IMAGE_REFS: list = []
+
+#: 16x16 方框内的对勾像素；再画一行 y+1 让笔画粗一点
+_TICK = ((4, 7), (5, 8), (6, 9), (7, 10), (8, 9), (9, 8), (10, 7), (11, 6), (12, 5))
+
+
+def _make_box_image(fill: str, border: str, tick: str | None) -> "tk.PhotoImage":
+    """画一个 16x16 的方框（可选带对勾）。整块不透明，避免透明像素的坑。"""
+    img = tk.PhotoImage(width=16, height=16)
+    img.put(border, (0, 0, 15, 0))
+    img.put(border, (0, 15, 15, 15))
+    img.put(border, (0, 1, 0, 14))
+    img.put(border, (15, 1, 15, 14))
+    img.put(fill, (1, 1, 14, 14))
+    if tick:
+        for x, y in _TICK:
+            img.put(tick, (x, y))
+            img.put(tick, (x, y + 1))
+    return img
+
+
+def _install_check_indicator(style: "ttk.Style", c: dict) -> None:
+    """用自绘位图替换复选框指示器。每次调用换一个新元素名，便于切换主题。"""
+    _ELEMENT_SEQ[0] += 1
+    name = f"Chk{_ELEMENT_SEQ[0]}.indicator"
+    un = _make_box_image(c["field"], c["border"], None)
+    ch = _make_box_image(c["accent"], c["accent"], c["accent_fg"])
+    und = _make_box_image(c["panel"], c["border"], None)
+    chd = _make_box_image(c["border"], c["border"], c["muted"])
+    # 必须长期持有引用，否则被 GC 回收后图片会变空白
+    _IMAGE_REFS.extend([un, ch, und, chd])
+    style.element_create(name, "image", un,
+                         ("selected", ch),
+                         ("disabled", "selected", chd),
+                         ("disabled", und))
+    layout = [("Checkbutton.padding", {"sticky": "nswe", "children": [
+        (name, {"side": "left", "sticky": ""}),
+        ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [
+            ("Checkbutton.label", {"sticky": "nswe"})]})]})]
+    for s in ("TCheckbutton", "Card.TCheckbutton"):
+        style.layout(s, layout)
+
 
 class ThemedCombobox(ttk.Combobox):
     """下拉列表配色可控的 Combobox。
@@ -168,35 +216,20 @@ def apply_theme(root: tk.Misc, dark: bool = True) -> dict[str, str]:
               selectforeground=[("readonly", c["fg"])])
     apply_option_db(root, c, ("Microsoft YaHei UI", 10))
 
-    # Checkbutton：clam 主题下对勾（checkmark）是**硬编码深色**的，改不了颜色。
-    # 所以不能让选中态也是深色底，否则深底 + 深勾 = 完全看不见。
-    # 做法：选中时把方框填成高亮的 accent 色，深色对勾落在亮底上就清晰了；
-    # 未选中时方框用 field 色并靠 bordercolor 勾出轮廓。
+    # Checkbutton：配色方案（indicatorcolor）不可靠，改用自绘指示器
     for name, bg in (("TCheckbutton", c["bg"]), ("Card.TCheckbutton", c["panel"])):
-        style.configure(
-            name,
-            background=bg,
-            foreground=c["fg"],
-            indicatorcolor=c["field"],          # 未选中：深色框
-            indicatorbackground=bg,
-            bordercolor=c["border"],
-            indicatordiameter=16,               # 放大，勾更易辨认
-            indicatormargin=(2, 2, 6, 2),
-            indicatorrelief="flat",
-            padding=(2, 3),
-        )
-        style.map(
-            name,
-            background=[("active", bg), ("disabled", bg)],
-            foreground=[("disabled", c["muted"]), ("active", c["fg"])],
-            indicatorcolor=[
-                ("selected", "disabled", c["muted"]),
-                ("selected", c["accent"]),      # 选中：亮蓝底 + 深色勾
-                ("!selected", "disabled", c["panel"]),
-                ("!selected", "active", c["border"]),
-                ("!selected", c["field"]),
-            ],
-        )
+        style.configure(name, background=bg, foreground=c["fg"], padding=(2, 3))
+        style.map(name,
+                  background=[("active", bg), ("disabled", bg)],
+                  foreground=[("disabled", c["muted"]), ("active", c["fg"])])
+    try:
+        _install_check_indicator(style, c)
+    except Exception:
+        # 自绘失败（例如无真实 Tk）时退回配色方案，保证不崩
+        for name in ("TCheckbutton", "Card.TCheckbutton"):
+            style.configure(name, indicatorcolor=c["field"])
+            style.map(name, indicatorcolor=[("selected", c["accent"]),
+                                            ("!selected", c["field"])])
 
     style.configure("TRadiobutton", background=c["bg"], foreground=c["fg"],
                     indicatorcolor=c["field"], indicatorbackground=c["field"])
