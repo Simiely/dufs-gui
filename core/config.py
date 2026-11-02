@@ -113,6 +113,26 @@ class ServerConfig:
             return local_ips()[0] if local_ips() else "127.0.0.1"
         return host
 
+    def probe_host(self) -> str:
+        """健康探测用的主机：通配绑定换成对应的回环地址。"""
+        host = self.bind.strip()
+        if host.startswith("[") and host.endswith("]"):
+            host = host[1:-1]
+        if host in ("", "0.0.0.0"):
+            return "127.0.0.1"
+        if host == "::":
+            return "::1"
+        return host
+
+    def health_url(self) -> str:
+        """dufs 官方健康检查地址，保持在 path-prefix 之下。"""
+        scheme = "https" if self.use_https else "http"
+        path = normalize_prefix(self.path_prefix)
+        host = self.probe_host()
+        if ":" in host:
+            host = f"[{host}]"
+        return f"{scheme}://{host}:{self.port}{path}/__dufs__/health"
+
     def url(self) -> str:
         scheme = "https" if self.use_https else "http"
         path = normalize_prefix(self.path_prefix)

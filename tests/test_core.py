@@ -176,6 +176,19 @@ class ConfigTest(unittest.TestCase):
         cfg.bind = "[::1]"
         self.assertEqual(cfg.url(), "http://[::1]:5000/")
 
+    def test_health_url_uses_loopback_and_prefix(self):
+        cfg = ServerConfig(share_path="/tmp", bind="0.0.0.0", port=5000,
+                           path_prefix="files")
+        self.assertEqual(cfg.health_url(),
+                         "http://127.0.0.1:5000/files/__dufs__/health")
+        cfg.bind = "::"
+        self.assertEqual(cfg.health_url(),
+                         "http://[::1]:5000/files/__dufs__/health")
+        cfg.bind = "::1"
+        cfg.path_prefix = ""
+        self.assertEqual(cfg.health_url(),
+                         "http://[::1]:5000/__dufs__/health")
+
     def test_persist(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "config.json"
