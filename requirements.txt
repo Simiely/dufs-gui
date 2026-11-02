@@ -1,0 +1,3 @@
+# 运行 GUI 只需要 Python 标准库（tkinter 随官方 Python 安装包自带）
+# 打包成 exe 才需要下面这一行
+pyinstaller>=6.0

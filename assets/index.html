@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dufs 文件共享</title>
+<link rel="stylesheet" href="__ASSETS_PREFIX__index.css">
+</head>
+<body>
+
+<!-- dufs 会把 __INDEX_DATA__ 替换成 base64 编码的目录数据（JSON） -->
+<div id="index-data" style="display:none">__INDEX_DATA__</div>
+
+<header class="head">
+  <nav class="breadcrumb" id="breadcrumb"></nav>
+
+  <div class="toolbox">
+    <form class="searchbar" id="searchbar" onsubmit="return false;">
+      <input type="search" id="search-input" placeholder="搜索文件名…" autocomplete="off">
+    </form>
+
+    <div class="actions" id="actions">
+      <button type="button" id="btn-upload" title="上传文件">上传</button>
+      <button type="button" id="btn-mkdir" title="新建文件夹">新建文件夹</button>
+      <button type="button" id="btn-zip" title="打包下载当前目录">打包下载</button>
+    </div>
+
+    <div class="userbox" id="userbox"></div>
+  </div>
+</header>
+
+<main class="main">
+
+  <!-- 上传进度 -->
+  <div class="uploaders" id="uploaders" hidden>
+    <table class="uploaders-table">
+      <thead><tr><th>名称</th><th>进度</th><th class="col-status">状态</th></tr></thead>
+      <tbody id="uploaders-body"></tbody>
+    </table>
+  </div>
+
+  <!-- 拖拽提示 -->
+  <div class="dropzone" id="dropzone"><div class="dropzone-inner">松开即可上传到当前目录</div></div>
+
+  <!-- 文件列表 -->
+  <div class="index-page">
+    <table class="paths-table">
+      <thead>
+        <tr>
+          <th class="col-name sortable" data-sort="name">名称</th>
+          <th class="col-mtime sortable" data-sort="mtime">修改时间</th>
+          <th class="col-size sortable" data-sort="size">大小</th>
+          <th class="col-actions">操作</th>
+        </tr>
+      </thead>
+      <tbody id="paths-body"></tbody>
+    </table>
+    <div class="empty-folder" id="empty-folder" hidden>这个文件夹是空的</div>
+  </div>
+
+  <div class="error-box" id="error-box" hidden></div>
+
+</main>
+
+<input type="file" id="file-input" multiple hidden>
+
+<script src="__ASSETS_PREFIX__index.js"></script>
+</body>
+</html>

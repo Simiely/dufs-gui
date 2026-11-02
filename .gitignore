@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller 产物
+build/
+dist/
+*.spec.bak
+
+# dufs 可执行文件（体积大且平台相关，用 tools/fetch_dufs.py 获取）
+bin/*.exe
+bin/dufs
+!bin/README.txt
+
+# 运行时下载/缓存
+.pytest_cache/
+.DS_Store
