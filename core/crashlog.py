@@ -117,6 +117,115 @@ def _skin_files(d) -> str:
         return f"(读取失败 {e})"
 
 
+def _has_marker(path, marker: str) -> bool:
+    """目录存在且包含指定标志文件，才算真正的 Tcl/Tk 数据目录。"""
+    try:
+        p = Path(path)
+        return p.is_dir() and (p / marker).is_file()
+    except OSError:
+        return False
+
+
+def _first_marker_dir(env_name: str, candidates, marker: str) -> Path | None:
+    """优先用 PyInstaller 运行时设置的环境变量，再按候选目录查找。
+
+    PyInstaller 6.x 的 pyi_rth__tkinter.py 会把 TCL_LIBRARY / TK_LIBRARY
+    指向 _MEIPASS/_tcl_data、_MEIPASS/_tk_data；旧版本可能用 tcl / tk。
+    直接读环境变量能同时兼容两种命名，也兼容 onedir 的 _internal 布局。
+    """
+    env_value = os.environ.get(env_name, "").strip()
+    if env_value and _has_marker(env_value, marker):
+        return Path(env_value)
+    for c in candidates:
+        if c and _has_marker(c, marker):
+            return Path(c)
+    return None
+
+
+def _source_tcl_candidates() -> list[Path]:
+    """源码运行时，Tcl 数据通常在 Python 安装目录的 tcl/ 下。"""
+    roots = []
+    for base in (getattr(sys, "base_prefix", ""), getattr(sys, "prefix", "")):
+        if base:
+            roots.append(Path(base))
+    out: list[Path] = []
+    for root in roots:
+        tcl_root = root / "tcl"
+        try:
+            out += sorted(tcl_root.glob("tcl[0-9]*"))
+        except OSError:
+            pass
+        out.append(tcl_root / "tcl8.6")
+    # 最权威的来源：Tcl 解释器自己报告的 library 目录
+    try:
+        import tkinter
+
+        out.append(Path(tkinter.Tcl().eval("info library")))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _source_tk_candidates(tcl_dir: Path | None) -> list[Path]:
+    roots = []
+    for base in (getattr(sys, "base_prefix", ""), getattr(sys, "prefix", "")):
+        if base:
+            roots.append(Path(base))
+    out: list[Path] = []
+    for root in roots:
+        tcl_root = root / "tcl"
+        try:
+            out += sorted(tcl_root.glob("tk[0-9]*"))
+        except OSError:
+            pass
+        out.append(tcl_root / "tk8.6")
+    if tcl_dir:
+        try:
+            out += sorted(tcl_dir.parent.glob("tk[0-9]*"))
+        except OSError:
+            pass
+    return out
+
+
+def tcl_tk_report() -> str:
+    """报告 Tcl/Tk 数据目录，打包与源码运行都给出可判定结论。
+
+    旧实现只检查 _MEIPASS/tcl、_MEIPASS/tk、_MEIPASS/_tk_data：
+    PyInstaller 6.x 实际使用 _tcl_data / _tk_data，于是 tcl/tk 必然显示缺失，
+    而 _tk_data 又掩盖了“其实都在”的事实。这里改为按标志文件判定：
+    Tcl 目录必须有 init.tcl，Tk 目录必须有 tk.tcl；目录存在但缺文件也算缺失。
+    """
+    frozen = bool(getattr(sys, "frozen", False))
+    if frozen:
+        base = Path(getattr(sys, "_MEIPASS", None) or os.path.dirname(sys.executable))
+        roots = [base, base / "_internal"]
+        tcl_names = ("_tcl_data", "tcl")
+        tk_names = ("_tk_data", "tk")
+        tcl = _first_marker_dir(
+            "TCL_LIBRARY", [r / n for r in roots for n in tcl_names], "init.tcl")
+        tk = _first_marker_dir(
+            "TK_LIBRARY", [r / n for r in roots for n in tk_names], "tk.tcl")
+        mode = "打包运行"
+    else:
+        tcl = _first_marker_dir("TCL_LIBRARY", _source_tcl_candidates(), "init.tcl")
+        tk = _first_marker_dir(
+            "TK_LIBRARY", _source_tk_candidates(tcl), "tk.tcl")
+        mode = "源码运行"
+
+    def line(name: str, path: Path | None, marker: str) -> str:
+        if path:
+            return f"{name:<11}: 存在 {path}（{marker}）"
+        if frozen:
+            return f"{name:<11}: 缺失（未找到含 {marker} 的目录）"
+        return f"{name:<11}: 未定位（源码模式，由 tkinter/系统提供）"
+
+    return "\n".join([
+        f"tcl/tk 模式  : {mode}",
+        line("tcl", tcl, "init.tcl"),
+        line("tk", tk, "tk.tcl"),
+    ])
+
+
 def env_report() -> str:
     """环境快照，用于排错：frozen 状态、_MEIPASS、可执行文件位置、Tcl/Tk 情况。"""
     lines = [
@@ -137,9 +246,5 @@ def env_report() -> str:
         lines.append(f"tkinter     : {tkinter.TkVersion}")
     except Exception as e:
         lines.append(f"tkinter     : 导入失败 -> {type(e).__name__}: {e}")
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        for sub in ("tcl", "tk", "_tk_data"):
-            d = Path(meipass) / sub
-            lines.append(f"{sub:<11}: {'存在' if d.exists() else '缺失'} ({d})")
+    lines.append(tcl_tk_report())
     return "\n".join(lines)

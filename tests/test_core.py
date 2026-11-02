@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 import core as core_pkg  # noqa: E402
-from core import dufsbin, server  # noqa: E402
+from core import crashlog, dufsbin, server  # noqa: E402
 from core.dufsbin import verify_assets_dir, webui_dir  # noqa: E402
 from core.config import (AppConfig, ServerConfig, load_config,  # noqa: E402
                          normalize_prefix, save_config)
@@ -215,6 +215,63 @@ class PortTest(unittest.TestCase):
             self.assertNotEqual(find_free_port(port, "::1"), port)
         finally:
             srv.close()
+
+
+class TclTkReportTest(unittest.TestCase):
+    """selftest 的 Tcl/Tk 目录判断：兼容 PyInstaller 新/旧布局与源码运行。"""
+
+    def _frozen_report(self, root: Path) -> str:
+        with mock.patch.object(sys, "_MEIPASS", str(root), create=True), \
+                mock.patch.object(sys, "frozen", True, create=True), \
+                mock.patch.dict(os.environ, {"TCL_LIBRARY": "", "TK_LIBRARY": ""}):
+            return crashlog.tcl_tk_report()
+
+    def test_pyinstaller6_layout_is_reported_present(self):
+        """PyInstaller 6.x 使用 _tcl_data / _tk_data，旧逻辑会误报缺失。"""
+        with tempfile.TemporaryDirectory() as td:
+            tcl = Path(td) / "_tcl_data"
+            tk = Path(td) / "_tk_data"
+            tcl.mkdir()
+            tk.mkdir()
+            (tcl / "init.tcl").write_text("# fake", encoding="utf-8")
+            (tk / "tk.tcl").write_text("# fake", encoding="utf-8")
+
+            report = self._frozen_report(Path(td))
+            self.assertIn("tcl/tk 模式  : 打包运行", report)
+            self.assertIn("tcl        : 存在", report)
+            self.assertIn("tk         : 存在", report)
+            self.assertNotIn("缺失", report)
+
+    def test_legacy_layout_is_reported_present(self):
+        """旧版本可能用 _MEIPASS/tcl、_MEIPASS/tk，也要能识别。"""
+        with tempfile.TemporaryDirectory() as td:
+            tcl = Path(td) / "tcl"
+            tk = Path(td) / "tk"
+            tcl.mkdir()
+            tk.mkdir()
+            (tcl / "init.tcl").write_text("# fake", encoding="utf-8")
+            (tk / "tk.tcl").write_text("# fake", encoding="utf-8")
+
+            report = self._frozen_report(Path(td))
+            self.assertIn("tcl        : 存在", report)
+            self.assertIn("tk         : 存在", report)
+
+    def test_missing_marker_is_still_reported(self):
+        """目录存在但缺 init.tcl / tk.tcl 时仍必须报缺失，不能一律显示 OK。"""
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "_tcl_data").mkdir()
+            (Path(td) / "_tk_data").mkdir()
+
+            report = self._frozen_report(Path(td))
+            self.assertEqual(report.count("缺失"), 2, report)
+
+    def test_source_mode_does_not_claim_frozen(self):
+        """源码运行没有 _MEIPASS，不能按打包目录结构判断。"""
+        with mock.patch.object(sys, "frozen", False, create=True), \
+                mock.patch.dict(os.environ, {"TCL_LIBRARY": "", "TK_LIBRARY": ""}):
+            report = crashlog.tcl_tk_report()
+        self.assertIn("源码运行", report)
+        self.assertNotIn("打包运行", report)
 
 
 class DufsBinTest(unittest.TestCase):
