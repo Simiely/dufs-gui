@@ -19,9 +19,12 @@ class SkinE2ETest(unittest.TestCase):
     def test_skin_check_passes(self):
         script = ROOT / "tools" / "check_skin.js"
         self.assertTrue(script.is_file(), "缺少 tools/check_skin.js")
+        # Windows runner 的默认 locale 可能是 cp1252；node 输出是 UTF-8，
+        # 不显式指定编码会让 reader 线程解码失败，r.stdout 变成 None。
         r = subprocess.run(["node", str(script)], capture_output=True,
-                           text=True, timeout=120, cwd=str(ROOT))
-        if "SKIP" in r.stdout:
+                           text=True, encoding="utf-8", errors="replace",
+                           timeout=120, cwd=str(ROOT))
+        if "SKIP" in (r.stdout or ""):
             self.skipTest("jsdom 未安装")
         self.assertEqual(r.returncode, 0,
                          f"皮肤检查未通过：\n{r.stdout}\n{r.stderr}")
