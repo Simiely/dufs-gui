@@ -14,7 +14,7 @@
 - **零第三方运行时依赖**（仅标准库），打包体积小、可靠性高
 - **默认安全**：监听 `127.0.0.1`、删除关闭、符号链接关闭
 - **失败要看得见**：`console=False` 下异常会静默消失，因此内置崩溃落盘与自检
-- **皮肤不能挡住共享**：网页美化默认关闭，且失败时自动降级
+- **皮肤不能挡住共享**：网页美化默认开启，失败时自动降级；降级只影响本次运行，不写盘
 
 ## 二、架构说明
 
@@ -30,10 +30,18 @@ core/
   winpos.py        弹窗定位（多显示器钳制）
   crashlog.py      sys.excepthook / 线程异常 / tkinter 回调异常 → 落盘
   app_state.py     全局深色状态（避免模块循环依赖）
-assets/            自研网页皮肤（index.html / index.css / index.js）
-tools/             fetch_dufs.py（下载 dufs）、embed_dufs.py（可选 base64 内嵌）
-tests/             37 项单测；tk_stub.py 提供无 tkinter 环境下的桩
+assets/            dufs 官方 v0.47.0 网页皮肤 + CSS 覆盖层
+tools/             fetch_dufs.py（下载 dufs）、fetch_skin.py（同步官方皮肤）、
+                   embed_dufs.py（可选 base64 内嵌）
+tests/             74 项单测（1 项 jsdom 皮肤 E2E 自动跳过）；
+                   tk_stub.py 提供无 tkinter 环境下的桩
 ```
+
+测试与 CI：
+
+- 本地：`python -m unittest discover -s tests`，74 项，1 项 jsdom E2E 自动跳过
+- Windows CI：`.github/workflows/windows-ci.yml`，`windows-latest`，
+  矩阵 Python 3.9 / 3.12，只跑标准库 unittest
 
 三条关键链路：
 
@@ -53,7 +61,7 @@ tests/             37 项单测；tk_stub.py 提供无 tkinter 环境下的桩
 | [`--assets` 缺 index.html](docs/问题记录/问题：dufs因assets目录缺少index.html拒绝启动.md) | dufs 启动即 bail，必须三件套齐全 |
 | [子进程继承 DLL 搜索路径](docs/问题记录/问题：子进程继承DLL搜索路径导致dufs无法启动.md) | `Popen` 前 `SetDllDirectoryW(None)` 并清 PATH |
 | [下拉列表/复选框深色不可见](docs/问题记录/问题：ttk下拉列表与复选框在深色下不可见.md) | 下拉是原生 Listbox；clam 对勾是硬编码深色 |
-| [弹窗内容被裁切](docs/问题记录/问题：弹窗内容超出固定尺寸被裁切.md) | 按 `winfo_reqheight()` 实测，不写死 |
+| [弹窗内容被裁切](docs/问题记录/问题：弹窗内容超出固定尺寸被裁切.md) | withdrawn 时 `winfo_reqheight()` 不可靠；固定 760 高 + Canvas 滚动兜底 |
 
 ## 四、与 knowledge-base 的衔接
 

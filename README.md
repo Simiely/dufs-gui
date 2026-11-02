@@ -17,14 +17,12 @@
 
 ## 快速开始
 
-**用现成的**：从 Releases 下载 `DufsGui.exe`，双击即用（dufs 已内置）。
-
-**自己打包**（Windows）：
+**目前尚未发布 Release**。请从源码构建（Windows）：
 
 ```bat
 git clone https://github.com/Simiely/dufs-gui
 cd dufs-gui
-build.bat          :: 产出单个 dist\DufsGui.exe
+build.bat          :: 产出单个 dist\DufsGui-v1.5.0.exe
 ```
 
 > 环境要求：**python.org 官方 Python 3.12.x**（conda / 嵌入式版的 tcl-tk 路径不一致，会闪退）。
@@ -46,14 +44,23 @@ python main.py
 | 配置方案 | 多套「目录 + 端口 + 能力」存成方案随时切换 |
 | 深色模式 | 默认深色，一键切浅色，Windows 标题栏跟随 |
 | 日志 | 实时回显，可清空 / 导出 |
-| 网页皮肤 | 基于 dufs 官方 assets：官方 JS 保证功能，CSS 层做深色配色 + 视觉改造；可用 `tools/fetch_skin.py` 随 dufs 升级 |
+| 网页皮肤 | dufs 官方 assets v0.47.0 + CSS 覆盖层：官方 HTML/JS 保证功能，CSS 做深色配色与视觉改造；升级 dufs 后用 `tools/fetch_skin.py` 同步 |
 
 安全默认值：监听默认 `127.0.0.1`（仅本机）、删除默认关闭、符号链接默认关闭并二次确认。
 
 ## 版本
 
-当前 **v1.2.0**。版本号唯一定义在 [`core/__init__.py`](core/__init__.py)，
-界面标题与打包产物名（`dist\DufsGui-v1.2.0.exe`）都从它派生。
+当前 **v1.5.0**。版本号唯一定义在 [`core/__init__.py`](core/__init__.py)，
+界面标题与打包产物名（`dist\DufsGui-v1.5.0.exe`）都从它派生。
+
+## 测试
+
+```bat
+python -m unittest discover -s tests   :: 74 项，1 项自动跳过（皮肤 jsdom E2E）
+```
+
+Windows CI 见 [.github/workflows/windows-ci.yml](.github/workflows/windows-ci.yml)，
+矩阵为 Python 3.9 / 3.12，只跑标准库 `unittest`。
 
 ## 文档
 
@@ -69,8 +76,13 @@ python main.py
 
 - 单实例只能挂一个共享目录（dufs 限制）；要多个就开多个程序实例
 - dufs 单文件模式（分享单个 iso 等）不走目录列表逻辑，网页皮肤不适用
-- 网页皮肤为自研前端，若 dufs 未来改动 IndexData 结构需同步
+- 网页皮肤基于 dufs 官方 assets v0.47.0；dufs 升级后需用 `tools/fetch_skin.py` 重新抓取，HTML/JS 与 dufs 必须同版本
 
 ## License
 
-同 dufs：MIT 或 Apache-2.0，二选一。
+本项目代码采用 **MIT**，见 [LICENSE](LICENSE)。
+
+内置/随包下载的 dufs 二进制来自 [sigoden/dufs](https://github.com/sigoden/dufs)，
+上游按 **MIT OR Apache-2.0** 授权分发；本项目不改变上游许可。
+上游许可全文见 [LICENSE-MIT](https://github.com/sigoden/dufs/blob/main/LICENSE-MIT) /
+[LICENSE-APACHE](https://github.com/sigoden/dufs/blob/main/LICENSE-APACHE)。

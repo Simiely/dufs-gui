@@ -1,14 +1,14 @@
 # AGENTS.md · 项目规则
 
-> 📌 **文档基线**：2026-11-02（commit `c167b97`）v1.2.2 修复皮肤被持久化配置永久关闭
-> **更新文档/代码后，请更新此行**（日期 + 新 commit hash），并在 CHANGELOG 追加版本
+> 📌 **代码基线**：2026-11-02 v1.5.0（commit `7e5f8a8`，加入 Windows CI 的提交）
+> 后续更新请追加新提交并在 CHANGELOG 记录；**不要引用已不在仓库历史中的 commit**。
 
 ## 技术栈
 
 - Python **3.9+**（打包推荐官方 CPython **3.12.x**），仅标准库：tkinter / ttk
 - 打包：PyInstaller（onefile 为主，支持 onedir）
 - 被封装对象：**dufs**（Rust 编写的单文件服务器，以子进程方式拉起）
-- 网页皮肤：`assets/` 下自研原生 HTML/CSS/JS，零框架零 CDN
+- 网页皮肤：dufs 官方 assets v0.47.0 + CSS 覆盖层，零框架零 CDN
 
 ## 关键坑（改代码前必读）
 
@@ -45,12 +45,14 @@
 ## 常用命令
 
 ```bat
-build.bat              :: 打正式单文件 exe（dist\DufsGui.exe）
+build.bat              :: 打正式单文件 exe（dist\DufsGui-v1.5.0.exe）
 build_debug.bat        :: 诊断版：环境体检 + 控制台 + 抓输出（排错先跑它）
 run_debug.bat          :: 只运行已有 exe 并抓取全部输出
 python main.py         :: 源码直接跑
-python -m unittest discover -s tests   :: 跑全部测试
+python -m unittest discover -s tests   :: 跑全部测试（74 项，1 项 jsdom 跳过）
 ```
+
+Windows CI：`.github/workflows/windows-ci.yml`，Python 3.9 / 3.12 矩阵。
 
 打包开关（环境变量）：`DUFS_GUI_MODE=onefile|onedir`、`DUFS_GUI_CONSOLE=1`、`DUFS_GUI_COLLECT_TK=1`。
 
@@ -60,4 +62,6 @@ python -m unittest discover -s tests   :: 跑全部测试
 
 ## 平台限制
 
-沙盒环境为 Linux 且**装不上 tkinter**，因此 GUI 的实际渲染、网页皮肤的实际观感**均未做过端到端验证**。已实证的是：打包流程、二进制释放与权限、命令行生成、崩溃落盘、自检输出。涉及视觉的判断一律以用户在 Windows 上的实测为准。
+Windows CI 已覆盖 74 项单测（Python 3.9 / 3.12；1 项 jsdom 皮肤 E2E 自动跳过），
+并在本机验证过真实 Tk 窗口构造与端口输入。**GUI 的视觉观感、网页皮肤的实际效果
+仍需在真实 Windows 桌面上确认**，涉及视觉的判断一律以实机结果为准。
