@@ -153,6 +153,33 @@ class UiSmokeTest(unittest.TestCase):
             self.assertTrue(errors and "导出失败" in errors[-1][0])
             self.assertTrue(any("日志导出失败" in x for x in logs))
 
+    def test_health_status_transitions(self):
+        """运行中 -> 无响应 -> 恢复 -> 已退出，全部经队列在主线程更新。"""
+        class FakeProc:
+            pid = 123
+
+            @staticmethod
+            def poll():
+                return None
+
+        self.gui.proc.proc = FakeProc()
+        self.gui.v_status.set("运行中 · PID 123")
+        self.gui.log_queue.put(("health_fail", "timed out"))
+        self.gui._drain_queues()
+        self.assertIn("无响应", self.gui.v_status.get())
+        self.assertEqual(self.gui.dot.cget("fg"), self.gui.colors["warn"])
+
+        self.gui.log_queue.put(("health_ok", "HTTP 200"))
+        self.gui._drain_queues()
+        self.assertTrue(self.gui.v_status.get().startswith("运行中"))
+        self.assertEqual(self.gui.dot.cget("fg"), self.gui.colors["ok"])
+
+        self.gui.proc.proc = None
+        self.gui.v_status.set("运行中 · PID 123")
+        self.gui.log_queue.put(("exit", None))
+        self.gui._drain_queues()
+        self.assertEqual(self.gui.v_status.get(), "已退出")
+
     def test_advanced_popup(self):
         """高级设置应弹出独立窗口，而不是在主界面展开。"""
         self.gui.adv_win = None

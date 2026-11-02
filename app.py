@@ -19,6 +19,7 @@ from core.theme import ThemedCheckbutton, ThemedCombobox
 from core.winpos import center_on_parent
 from core.config import (AppConfig, RENDER_MODES, ServerConfig, load_config,
                          save_config, config_file)
+from core.health import HealthMonitor
 from core.netutil import find_free_port, local_ips, port_in_use
 from core.server import DufsProcess
 from core.theme import apply_theme, enable_windows_dark_titlebar, palette
@@ -52,6 +53,7 @@ class DufsGui(tk.Tk):
         self.proc = DufsProcess(self.log_queue)
 
         self.dufs_path: Path | None = dufsbin.find_dufs()
+        self.health: HealthMonitor | None = None
         self.adv_win: tk.Toplevel | None = None
         self._adv_canvas: tk.Canvas | None = None
         self.config_widgets: list[tk.Widget] = []
@@ -904,13 +906,35 @@ class DufsGui(tk.Tk):
         self._add_recent(cfg.share_path)
         self._save()
         self._log(f"已启动：{cfg.url()}")
+        self._start_health(cfg)
         if self.adv_win is not None:
             try:
                 self._refresh_adv_hint()
             except Exception:
                 pass
 
+    def _start_health(self, cfg: ServerConfig) -> None:
+        """启动后台健康探测；URL 在服务运行期间固定。"""
+        self._stop_health()
+        url = cfg.health_url()
+        self.health = HealthMonitor(
+            lambda: url,
+            lambda kind, detail: self.log_queue.put((kind, detail)))
+        self.health.start()
+        self._log(f"健康检查：每 {self.health.interval:g}s HEAD {url}"
+                  f"（连续 {self.health.failure_threshold} 次失败判无响应）")
+
+    def _stop_health(self) -> None:
+        if self.health is not None:
+            try:
+                # 探测本身有 1.5s 超时；停止时最多等 0.5s，避免卡住 UI 主线程
+                self.health.stop(timeout=0.5)
+            except Exception:  # noqa: BLE001
+                pass
+            self.health = None
+
     def _stop(self, silent: bool = False) -> None:
+        self._stop_health()
         self.proc.stop()
         self.v_status.set("未启动")
         self._set_status_color("idle")
@@ -978,12 +1002,24 @@ class DufsGui(tk.Tk):
                 kind, payload = self.log_queue.get_nowait()
                 if kind == "log":
                     self._log(payload)
-                elif kind == "exit":
-                    if self.proc.running is False and self.v_status.get().startswith("运行中"):
-                        self._stop(silent=True)
-                        self.v_status.set("已退出")
+                elif kind == "health_ok":
+                    if self.proc.running:
+                        self.v_status.set(f"运行中 · PID {self.proc.pid}")
+                        self._set_status_color("run")
+                        self._log(f"服务已恢复响应（{payload}）")
+                elif kind == "health_fail":
+                    if self.proc.running and self.v_status.get().startswith("运行中"):
+                        self.v_status.set("无响应 · 进程仍在")
                         self._set_status_color("warn")
-                        self._log("dufs 进程已退出")
+                        self._log(f"服务无响应：健康检查连续失败（{payload}）")
+                elif kind == "exit":
+                    if self.proc.running is False:
+                        current = self.v_status.get()
+                        if current.startswith("运行中") or current.startswith("无响应"):
+                            self._stop(silent=True)
+                            self.v_status.set("已退出")
+                            self._set_status_color("warn")
+                            self._log("dufs 进程已退出")
         except queue.Empty:
             pass
 
@@ -994,6 +1030,7 @@ class DufsGui(tk.Tk):
             if not messagebox.askyesno("退出", "服务正在运行，退出将停止共享，确定吗？"):
                 return
             self.proc.stop()
+        self._stop_health()
         self._save()
         self.destroy()
 
