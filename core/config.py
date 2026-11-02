@@ -33,8 +33,9 @@ class ServerConfig:
     allow_archive: bool = True
     allow_symlink: bool = False
     enable_cors: bool = False
-    #: 是否启用界面皮肤
-    custom_ui: bool = False
+    #: 是否启用界面皮肤。默认开：index.html 已自包含，不会导致 dufs 启动失败；
+    #: 即便失败也有 --assets 自动降级兜底
+    custom_ui: bool = True
     #: 外部皮肤目录（如第三方 dufs-material-assets），留空则用内置皮肤
     assets_dir: str = ""
     hidden: str = ""

@@ -75,7 +75,7 @@ class DufsGui(tk.Tk):
         self.v_archive = tk.BooleanVar(value=True)
         self.v_symlink = tk.BooleanVar(value=False)
         self.v_cors = tk.BooleanVar(value=False)
-        self.v_custom_ui = tk.BooleanVar(value=False)
+        self.v_custom_ui = tk.BooleanVar(value=True)
         self.v_assets_dir = tk.StringVar(value="")
         self.v_hidden = tk.StringVar(value="")
         self.v_render = tk.StringVar(value="自动列表（默认）")
@@ -717,6 +717,12 @@ class DufsGui(tk.Tk):
                 return
         self.dufs_path = binary
 
+        # 记录皮肤是否真的生效，方便核对（"网页还是默认样式"时先看这行）
+        if "--assets" in cfg.to_args():
+            self._log("网页皮肤：已启用自定义界面")
+        else:
+            self._log("网页皮肤：未启用，使用 dufs 默认界面")
+
         host_check = "127.0.0.1" if cfg.bind in ("0.0.0.0", "::", "[::]") else cfg.bind
         if port_in_use(cfg.port, host_check):
             free = find_free_port(cfg.port, host_check)
@@ -807,7 +813,11 @@ class DufsGui(tk.Tk):
     # ---------------- 浏览器 / 剪贴板 ----------------
     def _open_browser(self) -> None:
         if self.proc.running:
-            webbrowser.open(self.current_config().url())
+            # 加时间戳 fragment：URL 变了浏览器才会重新拉取，避免看到缓存的旧页面。
+            # 用 fragment 而不是 query，是因为 fragment 不会发给服务端，
+            # 不会影响 dufs 对 ?q= / ?zip 等参数的解析。
+            import time
+            webbrowser.open(self.current_config().url() + "#" + str(int(time.time())))
 
     def _copy_url(self) -> None:
         url = self.current_config().url() if self.proc.running else self.v_url.get()

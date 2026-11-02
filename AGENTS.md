@@ -20,7 +20,10 @@
 6. **clam 主题的对勾是硬编码深色，且 `indicatorcolor` 会静默失效**（不报错，就是没效果）。
    不要靠配色去调，直接**自绘 16x16 位图 + `element_create` 替换指示器**
    （见 `core/theme.py` 的 `_install_check_indicator`）。自绘图片必须长期持有引用，否则被 GC 后变空白。
-7. **`ttk.Label` 不要写死 `wraplength`**。窗口宽度和可用宽度不一致时换行位置会错乱，
+7. **皮肤必须自包含，不要引用外部 CSS/JS**。dufs 的资源前缀占位符写法各版本不一致
+   （`__ASSETS_PREFIX__` 与 `__ASSERTS_PREFIX__` 都出现过），对不上就整体失效且无报错。
+   `assets/index.html` 已把样式与脚本全部内联，改样式直接编辑 `<style>` 块。
+8. **`ttk.Label` 不要写死 `wraplength`**。窗口宽度和可用宽度不一致时换行位置会错乱，
    长文本被截得看不懂（等效命令曾显示成 `--e`）。改为 `<Configure>` 里按真实宽度自适应。
 
 ## 约定

@@ -56,7 +56,8 @@ else:
 datas = []
 # 网页皮肤：三个文件必须齐全，尤其 index.html
 # —— dufs 启动时硬性校验 --assets 目录里必须有 index.html，缺了直接 bail 拒绝启动
-UI_FILES = ["index.html", "index.css", "index.js"]
+# CSS 与 JS 已内联进 index.html，不再依赖 __ASSETS_PREFIX__ 占位符
+UI_FILES = ["index.html"]
 WEBUI = os.path.join(ROOT, "assets")
 for f in UI_FILES:
     src = os.path.join(WEBUI, f)

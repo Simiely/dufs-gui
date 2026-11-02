@@ -353,12 +353,26 @@ class AssetsDirTest(unittest.TestCase):
         self.assertIn("不存在", msg)
 
     def test_builtin_skin_has_index_html(self):
-        """打包内置皮肤必须三件套齐全，否则启动必失败。"""
+        """dufs 启动硬性要求 --assets 目录含 index.html。"""
         d = dufsbin.webui_dir()
         if d is None:
             self.skipTest("未找到内置皮肤目录")
-        for f in ("index.html", "index.css", "index.js"):
-            self.assertTrue((d / f).is_file(), f"内置皮肤缺少 {f}")
+        self.assertTrue((d / "index.html").is_file())
+
+    def test_skin_is_self_contained(self):
+        """皮肤必须自包含：不引用任何外部 CSS/JS。
+
+        dufs 的资源前缀占位符写法各版本不一致（__ASSETS_PREFIX__ 与
+        __ASSERTS_PREFIX__ 都存在过），一旦对不上替换就不会发生，
+        外部资源全部 404、页面退回无样式状态。内联可彻底规避。
+        """
+        html = (REPO / "assets" / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("<link", html)
+        self.assertNotIn("script src", html)
+        self.assertNotIn('href="__', html)
+        self.assertIn("<style>", html)
+        self.assertIn("<script>", html)
+        self.assertIn("__INDEX_DATA__", html)
 
     def test_args_omitted_when_no_index_html(self):
         """即使勾选了美化，目录不含 index.html 时也不能传 --assets。"""
@@ -373,9 +387,9 @@ class AssetsDirTest(unittest.TestCase):
             cfg = ServerConfig(share_path="/tmp", custom_ui=True, assets_dir=d)
             self.assertIn("--assets", cfg.to_args())
 
-    def test_default_is_off(self):
-        """默认不启用皮肤：宁可样式朴素，也不能挡住共享本身。"""
-        self.assertFalse(ServerConfig().custom_ui)
+    def test_default_is_on(self):
+        """默认启用皮肤：index.html 自包含且必然存在，不会拖垮启动。"""
+        self.assertTrue(ServerConfig().custom_ui)
 
 
 class WaitReadyTest(unittest.TestCase):
