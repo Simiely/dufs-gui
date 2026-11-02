@@ -2,7 +2,7 @@
 
 本项目版本格式：`主版本.次版本.修订`，按版本倒序分节。
 
-## [1.0.0] - 2026-11-02（commit `2dc39c8`）
+## [1.0.0] - 2026-11-02（commit `e4b8cac`）
 
 首个可用版本。完成四件套（README / AGENTS / DEVELOPMENT / CHANGELOG）重写。
 
