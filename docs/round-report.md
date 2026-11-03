@@ -393,3 +393,20 @@ Win10 直角接受。证据：`spike-legacy-rgn.png` / `spike-legacy-rgn-zoom.pn
   `round9-webui-after.png`；产物 `dist\DufsGui-v1.6.2.exe`，15,729,124 B，
   SHA256 `39dd518cb2792ab04c04c8c182d1b9c2fdbdfb62ff4e3528423a99b1ba31957b`。
 
+## 15. 批次 10：emoji 图标与操作按钮重构（v1.6.3）
+
+- **站点图标**：官方 `index.html` 引用 `__ASSETS_PREFIX__favicon.ico`，仓库资产保持官方字节。
+  覆盖副本把它替换成内联 `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,...">`，
+  SVG 内 `<text>` 放 📤；不依赖 `favicon.ico` 文件，不会 404。
+  选 📤 而非 🗂️/📁：16px 下轮廓最清楚（`round10-favicon-tabs.png` 浅/深对比）。
+- **移动/重命名**：汉化后的操作模板由 `patch_action_buttons` 拆成 `movePath` 与
+  `renamePath` 两个按钮；重命名只改同目录名称，含 `/` 时提示改用移动。
+- **按钮样式**：`_TOP_BAR_OVERRIDE` 追加 `.cell-actions` 规则：inline-flex、1px 描边、
+  圆角 8、间距 8、hover `#2c2c2e`、focus-visible 外描边；≤1080px 隐藏 `.act-text`。
+  官方 `.path a` 在 ≥768px 有 `min-width:400px`，窄屏会撑破表格，已在同一媒体查询里解除。
+- 验证：Edge 无头（Playwright channel=msedge）1280/820 两档；favicon href 为 data URI、
+  含 `%F0%9F%93%A4`、解码 `naturalWidth=150`、无 ≥400 响应；截图
+  `round10-actions-1280.png`、`round10-actions-820.png`、`round10-favicon-tabs.png`。
+- 单测 207 OK（skipped=1），资源版本 `v=2184def7f1`，产物 `dist\DufsGui-v1.6.3.exe`，
+  15,730,446 B，SHA256 `7c8c402257aeb6789d6b2238a2fe594c9c3c9e5015b9bd86d52b74d1cb87b6c3`。
+

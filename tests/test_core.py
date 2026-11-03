@@ -345,6 +345,17 @@ class ConfigTest(unittest.TestCase):
             self.assertIn('text: "修改时间",', js)
             self.assertNotIn('<th class="cell-actions">Actions</th>', js)
             self.assertNotIn('title="Download file"', js)
+            # 移动/重命名拆成两个按钮，操作按钮带文字与 aria-label
+            self.assertNotIn('title="移动 / 重命名"', js)
+            self.assertIn('id="renameBtn${index}"', js)
+            self.assertIn("async function renamePath", js)
+            self.assertIn('aria-label="重命名"', js)
+            self.assertIn('class="act-text">下载', js)
+            self.assertEqual(js.count('class="act-text"'), 7)
+            # 站点图标改为内联 emoji，不再引用 favicon.ico
+            self.assertIn("data:image/svg+xml", html)
+            self.assertIn("%F0%9F%93%A4", html)  # 📤 的 URL 编码
+            self.assertNotIn("favicon.ico", html)
             self.assertIn('lang="zh-CN"', html)
             self.assertIn('<th class="cell-name" colspan="2">上传任务</th>', html)
             self.assertNotIn('title="Delete"', html)
@@ -353,6 +364,8 @@ class ConfigTest(unittest.TestCase):
             self.assertRegex(html, r"__ASSETS_PREFIX__index\.js\?v=[0-9a-f]{10}")
             self.assertIn("DufsGui 运行时覆盖", css)
             self.assertIn("display: none !important;", css)
+            self.assertIn(".paths-table .cell-actions .action-btn", css)
+            self.assertIn("border-radius: 8px;", css)
             source_js = (root / "assets" / "index.js").read_text(encoding="utf-8")
             self.assertIn('<th class="cell-actions">Actions</th>', source_js)
             self.assertNotIn("DufsGui 运行时覆盖",

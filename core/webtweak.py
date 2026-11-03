@@ -19,6 +19,7 @@ import json
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import quote
 
 from .dufsbin import app_data_dir
 
@@ -100,8 +101,9 @@ _HTML_I18N: tuple[tuple[str, str, int], ...] = (
     ('aria-label="Editor"', 'aria-label="编辑器"', 1),
 )
 
-#: 顶部彩条覆盖：官方 index.css 的 ``body::before`` 是 3px 渐变。
-#: 不改官方文件本身，只在运行时副本末尾追加覆盖，皮肤重新 fetch 也不丢。
+#: 顶部彩条覆盖 + 操作按钮样式：官方 ``body::before`` 是 3px 渐变；
+#: 官方 ``.action-btn`` 是 26x26 纯图标。只在运行时副本末尾追加覆盖，
+#: 皮肤重新 fetch 也不丢。
 _TOP_BAR_OVERRIDE = """
 /* ===== DufsGui 运行时覆盖（每次启动重新生成，不修改仓库资产）===== */
 /* 移除顶部渐变彩条：与页面背景同色，深色下不出现亮色断层 */
@@ -111,7 +113,81 @@ body::before {
   height: 0 !important;
   background: none !important;
 }
+
+/* 操作列：图标 + 文字的描边圆角小按钮，间距 8px */
+.paths-table .cell-actions {
+  width: auto;
+  display: table-cell;
+  white-space: nowrap;
+  vertical-align: middle;
+  padding-left: 14px;
+}
+.paths-table .cell-actions .action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: auto;
+  height: 26px;
+  padding: 0 8px;
+  margin-left: 8px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background .13s ease, border-color .13s ease, color .13s ease;
+}
+.paths-table .cell-actions .action-btn:first-child { margin-left: 0; }
+.paths-table .cell-actions .action-btn:hover {
+  background: #2c2c2e;
+  border-color: var(--text-accent);
+  color: var(--text-primary);
+}
+.paths-table .cell-actions .action-btn:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: 1px;
+}
+.paths-table .cell-actions .action-btn svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.paths-table .cell-actions .action-btn .act-text { white-space: nowrap; }
+
+/* 窄窗口放不下文字时只留图标，语义由 aria-label 保留 */
+@media (max-width: 1080px) {
+  /* 官方 .path a 在 >=768px 有 min-width:400px，会把名称列撑到表格溢出 */
+  .paths-table .cell-name a { min-width: 0; }
+  .paths-table .cell-actions .action-btn {
+    width: 28px;
+    padding: 0;
+    margin-left: 6px;
+  }
+  .paths-table .cell-actions .action-btn:first-child { margin-left: 0; }
+  .paths-table .cell-actions .action-btn .act-text { display: none; }
+}
 """
+
+#: 站点图标：dufs 官方引用 ``__ASSETS_PREFIX__favicon.ico``。
+#: 覆盖副本改成内联 SVG data URI 的 emoji，不依赖外部文件、不会 404。
+_FAVICON_LINK = ('<link rel="icon" type="image/x-icon" '
+                 'href="__ASSETS_PREFIX__favicon.ico">')
+
+#: 选 📤 而不是 🗂️/📁：16px 下托盘+箭头轮廓最清楚，浅色/深色标签栏都不糊。
+FAVICON_EMOJI = "📤"
+
+#: 重命名图标：铅笔 + 基线，与"移动"箭头、"编辑"文档图标区分。
+_RENAME_ICON = (
+    '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" '
+    'aria-hidden="true"><path d="M1 13h14v1.1H1z"/>'
+    '<path d="M12.2 1.6l2.2 2.2-8.7 8.7-3 .8.8-3z"/></svg>'
+)
+
 
 
 def sanitize_title(value: str) -> str:
@@ -191,12 +267,153 @@ def localize_index_html(html: str) -> tuple[str | None, str]:
     return _apply_i18n(html, _HTML_I18N, "网页静态文案")
 
 
+#: 在**已汉化**的 index.js 上拆出"重命名"，并把操作按钮改成图标 + 文字。
+#: 锚点都是汉化后的完整模板片段；任一处缺失就整体跳过（保留官方纯图标）。
+_ACTION_PATCHES: tuple[tuple[str, str], ...] = (
+    (
+        '''      actionDownload = `
+      <div class="action-btn">
+        <a class="dlwt" href="${url}?zip" title="将文件夹打包为 .zip 下载" download>${ICONS.download}</a>
+      </div>`;''',
+        '''      actionDownload = `
+      <a class="action-btn dlwt" href="${url}?zip" title="将文件夹打包为 .zip 下载" download aria-label="下载">${ICONS.download}<span class="act-text">下载</span></a>`;''',
+    ),
+    (
+        '''    actionDownload = `
+    <div class="action-btn" >
+      <a class="dlwt" href="${url}" title="下载文件" download>${ICONS.download}</a>
+    </div>`;''',
+        '''    actionDownload = `
+    <a class="action-btn dlwt" href="${url}" title="下载文件" download aria-label="下载">${ICONS.download}<span class="act-text">下载</span></a>`;''',
+    ),
+    (
+        '''  let actionMove = "";''',
+        '''  let actionMove = "";
+  let actionRename = "";''',
+    ),
+    (
+        '''      actionMove = `<div onclick="movePath(${index})" class="action-btn" id="moveBtn${index}" title="移动 / 重命名">${ICONS.move}</div>`;''',
+        '''      actionMove = `<div onclick="movePath(${index})" class="action-btn" id="moveBtn${index}" title="移动" aria-label="移动">${ICONS.move}<span class="act-text">移动</span></div>`;
+      actionRename = `<div onclick="renamePath(${index})" class="action-btn" id="renameBtn${index}" title="重命名" aria-label="重命名">${__DUFS_GUI_RENAME_ICON}<span class="act-text">重命名</span></div>`;''',
+    ),
+    (
+        '''        actionEdit = `<a class="action-btn" title="编辑文件" target="_blank" href="${url}?edit">${ICONS.edit}</a>`;''',
+        '''        actionEdit = `<a class="action-btn" title="编辑文件" target="_blank" href="${url}?edit" aria-label="编辑">${ICONS.edit}<span class="act-text">编辑</span></a>`;''',
+    ),
+    (
+        '''    actionDelete = `
+    <div onclick="deletePath(${index})" class="action-btn" id="deleteBtn${index}" title="删除">${ICONS.delete}</div>`;''',
+        '''    actionDelete = `
+    <div onclick="deletePath(${index})" class="action-btn" id="deleteBtn${index}" title="删除" aria-label="删除">${ICONS.delete}<span class="act-text">删除</span></div>`;''',
+    ),
+    (
+        '''    actionView = `<a class="action-btn" title="查看文件" target="_blank" href="${url}?view">${ICONS.view}</a>`;''',
+        '''    actionView = `<a class="action-btn" title="查看文件" target="_blank" href="${url}?view" aria-label="查看">${ICONS.view}<span class="act-text">查看</span></a>`;''',
+    ),
+    (
+        '''    ${actionMove}
+    ${actionDelete}''',
+        '''    ${actionMove}
+    ${actionRename}
+    ${actionDelete}''',
+    ),
+    (
+        '''}
+
+
+/**
+ * Save editor change''',
+        '''}
+
+
+/**
+ * Rename path（同一目录内改名，跨目录仍走"移动"）
+ * @param {number} index
+ */
+async function renamePath(index) {
+  const file = DATA.paths[index];
+  if (!file) return;
+  const fileUrl = newUrl(file.name);
+  const urlObj = new URL(fileUrl);
+  const prefix = DATA.uri_prefix.slice(0, -1);
+  const filePath = decodeURIComponent(urlObj.pathname.slice(prefix.length));
+  const name = prompt("输入新名称", file.name);
+  if (!name || name === file.name) return;
+  if (name.includes("/")) {
+    alert("名称不能包含「/」，跨目录请使用「移动」");
+    return;
+  }
+  const dir = filePath.split("/").slice(0, -1).join("/");
+  const newPath = dir + "/" + name;
+  const newFileUrl = urlObj.origin + prefix + newPath.split("/").map(encodeURIComponent).join("/");
+
+  try {
+    await checkAuth();
+    const res1 = await fetch(newFileUrl, {
+      method: "HEAD",
+    });
+    if (res1.status === 200) {
+      if (!confirm("覆盖已存在的文件？")) return;
+    }
+    const res2 = await fetch(fileUrl, {
+      method: "MOVE",
+      headers: {
+        "Destination": newFileUrl,
+      }
+    });
+    await assertResOK(res2);
+    location.href = newFileUrl.split("/").slice(0, -1).join("/");
+  } catch (err) {
+    alert(`无法重命名「${file.name}」：${err.message}`);
+  }
+}
+
+
+/**
+ * Save editor change''',
+    ),
+)
+
+
+def patch_action_buttons(js: str) -> tuple[str | None, str]:
+    """拆开移动/重命名，并给操作按钮加文字与 aria-label。
+
+    只处理汉化后的模板；任何锚点数量不为 1 都整体跳过，避免半套 UI。
+    """
+    bad = [(a.splitlines()[0][:40], js.count(a))
+           for a, _ in _ACTION_PATCHES if js.count(a) != 1]
+    if bad:
+        return None, (f"操作按钮结构不符，未拆分（{len(bad)} 处："
+                      + "；".join(f"{name}×{n}" for name, n in bad[:3]) + "）")
+    for anchor, replacement in _ACTION_PATCHES:
+        js = js.replace(anchor, replacement)
+    js = "const __DUFS_GUI_RENAME_ICON = " + json.dumps(_RENAME_ICON) + ";\n" + js
+    return js, f"操作按钮已改为图标+文字（{len(_ACTION_PATCHES)} 处，移动/重命名已拆分）"
+
+
+def emoji_favicon_link(emoji: str = FAVICON_EMOJI) -> str:
+    """内联 SVG data URI 的 emoji 站点图标。"""
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+           '<text x="50" y="50" font-size="88" text-anchor="middle" '
+           f'dominant-baseline="central">{emoji}</text></svg>')
+    return ('<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,'
+            + quote(svg, safe="") + '">')
+
+
+def patch_favicon_html(html: str, emoji: str = FAVICON_EMOJI) -> tuple[str, str]:
+    """把官方 favicon.ico 引用换成 emoji data URI；找不到引用则原样返回。"""
+    if _FAVICON_LINK not in html:
+        return html, "未找到官方 favicon 引用，跳过 emoji 图标"
+    return (html.replace(_FAVICON_LINK, emoji_favicon_link(emoji)),
+            f"站点图标已改为内联 emoji：{emoji}")
+
+
 def patch_index_css(css: str) -> tuple[str, str]:
-    """追加顶部彩条覆盖；重复调用不会叠加（幂等）。"""
+    """追加顶部彩条覆盖与操作按钮样式；重复调用不会叠加（幂等）。"""
     marker = "DufsGui 运行时覆盖"
     if marker in css:
-        return css, "顶部彩条覆盖已存在"
-    return css + _TOP_BAR_OVERRIDE, "顶部渐变彩条已移除"
+        return css, "运行时样式覆盖已存在"
+    return css + _TOP_BAR_OVERRIDE, "顶部渐变彩条与操作按钮样式已追加"
 
 
 #: dufs 对 /__dufs_v<ver>__/index.css|index.js 返回
@@ -299,6 +516,10 @@ def prepare_overlay(source_dir: str, title: str, favicon_path: str,
             notes.append(msg)
             if localized is not None:
                 text = localized
+            actioned, msg = patch_action_buttons(text)
+            notes.append(msg)
+            if actioned is not None:
+                text = actioned
             if text != original:
                 try:
                     js_path.write_text(text, encoding="utf-8")
@@ -317,9 +538,13 @@ def prepare_overlay(source_dir: str, title: str, favicon_path: str,
     else:
         localized, msg = localize_index_html(original_html)
         notes.append(msg)
-        if localized is not None and localized != original_html:
+        text_html = localized if localized is not None else original_html
+        if not favicon_path:
+            text_html, msg = patch_favicon_html(text_html)
+            notes.append(msg)
+        if text_html != original_html:
             try:
-                html_path.write_text(localized, encoding="utf-8")
+                html_path.write_text(text_html, encoding="utf-8")
                 applied = True
             except OSError as e:
                 notes.append(f"写入 index.html 失败：{e}")
