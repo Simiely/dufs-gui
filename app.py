@@ -521,10 +521,11 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
             else:
                 return
 
-        # 网页标题/favicon：复制皮肤到用户目录再注入，不改仓库/fetch 产物
+        # 网页标题/favicon/中文文案/去彩条：复制皮肤到用户目录再注入，
+        # 不改仓库/fetch 产物；只要启用网页美化界面就始终生成副本。
         launch_cfg = cfg
         skin_dir = self.skin_dir()
-        if cfg.custom_ui and (cfg.web_title or cfg.favicon_path):
+        if cfg.custom_ui:
             overlay = webtweak.prepare_overlay(
                 skin_dir, cfg.web_title, cfg.favicon_path)
             for note in overlay.notes:
@@ -691,20 +692,31 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         url = running[0].url + "#" + str(int(time.time()))
         webbrowser.open(url)
 
-    def _open_qr(self) -> None:
-        """二维码内容必须与实际共享地址一致：优先取运行中的地址。"""
+    def _qr_urls(self) -> list[str]:
+        """所有可访问地址：运行中用实际监听地址，未运行用配置地址。
+
+        顺序沿用启动计划/网卡排序（活动网卡优先、回环垫底），首项即默认主推。
+        """
         urls = [st.url for st in self.manager.running_states if st.url]
-        url = urls[0] if urls else ""
-        if not url:
+        if not urls:
             cfg = self.current_config()
             if cfg.effective_binds() and cfg.share_path:
-                url = cfg.url()
-        if not url:
+                urls = [cfg.url(bind=b) for b in cfg.effective_binds()]
+        result: list[str] = []
+        for url in urls:
+            if url and url not in result:
+                result.append(url)
+        return result
+
+    def _open_qr(self) -> None:
+        """二维码内容必须与实际共享地址一致；多地址时弹窗内可切换。"""
+        urls = self._qr_urls()
+        if not urls:
             self.v_status.set("没有可生成二维码的共享地址")
             self._set_status_color("warn")
             self._log("未选择网卡或共享目录，无法生成二维码")
             return
-        dialogs.show_qr(self, url)
+        dialogs.show_qr(self, urls[0], urls=urls)
 
     def _copy_url(self) -> None:
         urls = [st.url for st in self.manager.running_states]

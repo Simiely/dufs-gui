@@ -270,3 +270,89 @@ Win10 直角接受。证据：`spike-legacy-rgn.png` / `spike-legacy-rgn-zoom.pn
 - 冻结复验：启动共享 → 5099 可连、日志有 dufs 输出、停止后 dufs 进程与端口均消失、无新增可见控制台。
 - 未验证：删除确认框截图为源码运行态（冻结版共用同一 `ui/dialog.py`，未在冻结版点选方案流程中复现）。
 
+## 12. 批次 7：共享页汉化 / 去彩条 / 二维码多地址
+
+### 12.1 文案来源与可改边界
+
+先区分「页面自绘」「dufs 二进制」「浏览器原生」三类来源，只改第一类：
+
+| 来源 | 具体位置 | 处理 |
+| --- | --- | --- |
+| 皮肤 JS 固定文案 | `assets/index.js`：按钮 `title`、空列表提示、搜索表头、上传/编辑/删除/重命名弹窗文本 | 运行时副本逐条替换，共 36 条 |
+| 皮肤静态文案 | `assets/index.html`：`lang`、按钮 `title`、`aria-label="Editor"`、上传任务表头 | 运行时副本替换，共 13 条 / 14 处 |
+| 皮肤样式 | `assets/index.css` 第 357–365 行 `body::before` 渐变彩条 | 运行时副本末尾追加覆盖 |
+| 浏览器标签标题 | `index.js` 3 处 ``document.title = ...`` | 沿用既有标题注入；空值回落中文标题 |
+| **dufs 二进制内置页** | `?noscript` 回退页（`Index of /`、`10.00 B`、`../`） | **不可改**，明确保留英文 |
+| **dufs 二进制错误正文** | 404 `Not Found`、403 等纯文本；401 由 `WWW-Authenticate: Basic realm="DUFS"` 触发浏览器登录框 | **不可改** |
+| **浏览器原生弹层** | `confirm`/`prompt`/`alert` 的按钮文字、HTTP Basic 登录框 | 文本已汉化；按钮文字随浏览器语言，**不可改** |
+| 服务端动态文本 | `${ajax.status} ${ajax.statusText}`、上传失败 `${reason}` | **不翻译**（服务器/浏览器状态文本） |
+| 内部枚举 | `DATA.kind` 的 `Dir`/`File`/`SymlinkDir` 等 | 逻辑值，非界面文案，不动 |
+| 文件名/用户数据 | 目录项、路径、共享名 | **不翻译** |
+
+没有用 CSS 隐藏英文来冒充汉化：`?noscript`、错误正文、登录框仍会显示英文，选中「网页美化界面」
+时页面常规操作文案为中文。关闭「网页美化界面」则 dufs 使用内置官方皮肤（英文），这是用户显式选择。
+
+### 12.2 运行时副本注入与维护成本
+
+- `core/webtweak.py` 的 `prepare_overlay` 现在只要 `custom_ui` 开启就生成副本（此前仅标题/favicon
+  非空才生成）：复制 `assets/` → 标题注入 → `localize_index_js` / `localize_index_html` →
+  `patch_index_css` → 自定义 favicon（可选）。仓库 `assets/` 始终不写（测试断言源目录仍为英文）。
+- 汉化采用**锚点计数 + 整文件全有或全无**：每条原文必须出现预期次数(M=1/2)，否则该文件不写并记日志
+  「结构已变化，未汉化（N 处不符）」。优点是不会出现中英混杂；维护成本是皮肤升级后按日志补映射，
+  单测 `test_localize_real_skin_and_remove_top_bar` 会在锚点失配时直接失败提醒。
+- CSS 覆盖带标记，重复调用幂等；每次启动重建副本，因此皮肤重新 `fetch_skin.py` 后依然生效。
+
+### 12.3 顶部彩条去掉
+
+- 来源：`assets/index.css:358` `body::before`，`height: 3px`，
+  `linear-gradient(90deg, #4f9cf9, #7c5cff, #3fb950)`，`z-index:100`。
+- 复制副本末尾追加 `body::before { content:none; display:none; height:0; background:none }`，
+  不改官方文件。彩条下面是 `.head` 的深色背景，去掉后无白边、无断层；导航/工具栏未动。
+- 截图（Edge 实际渲染，1280×900 / 520×900）：
+  `round7-web-before-1280.png`、`round7-web-before-520.png`（有彩条、英文表头）；
+  `round7-web-after-1280.png`、`round7-web-after-520.png`（无彩条、中文表头）。
+
+### 12.4 二维码多地址
+
+- `app._qr_urls()`：运行中用 `manager.running_states` 的实际地址，未运行用
+  `cfg.effective_binds()` 的配置地址；去重且保留顺序（启动计划/网卡排序：活动网卡优先、回环垫底），
+  首项即默认主推。
+- `dialogs.build_qr_window(parent, url, urls=...)`：首项默认选中；多于一个地址时顶部显示
+  「访问地址」`ttk.Combobox`，切换触发 `qr_select()`；单地址不创建选择器。
+- 性能：构建时按 URL 预生成矩阵缓存 `qr_cache`；切换只重绘 Canvas，不重新编码；窗口按最大
+  QR 边长固定，切换不跳动。复制链接读 `qr_payload`，保存 PNG 读 `qr_matrix`，均跟随当前地址。
+- 尺寸：多地址 376×575，单地址 376×523（少 52px 选择器行，无空洞）。
+- 截图：`round7-qr-multi-default.png`（10.4.240.16）、`round7-qr-multi-switched.png`（127.0.0.1）、
+  `round7-qr-single.png`（无选择器）；冻结版对应 `round7-frozen-qr-*.png`。
+
+### 12.5 GUI 副标题移除
+
+- 删除 `ui/layout.py` 中「固定深色 · 基于 dufs 的轻量文件共享」整行，`actions` 从 `rowspan=2`
+  改为单行；仅保留 `Dufs GUI` 标题。全文检索该文案已无残留（单测断言）。
+- 截图：`round7-gui-no-subtitle.png`、`round7-gui-no-subtitle-header-2x.png`、冻结版
+  `round7-frozen-main.png`；标题与右侧按钮同排，无空行/空洞。
+
+### 12.6 回归与产物
+
+- 全量单测：**192 通过 / 1 跳过**。新增/调整：运行时副本始终生成、真实皮肤全量汉化与去彩条、
+  锚点失配拒绝半汉化、CSS 覆盖幂等、二维码选择器切换/单地址隐藏、`_qr_urls` 顺序去重、副标题移除。
+- `build.bat`：成功；`--selftest` 通过；`BUILD-INFO.txt` / `SHA256SUMS` 已更新。
+- 产物：`dist/DufsGui-v1.6.0.exe`，**15,716,495 字节**，
+  SHA256 `483DAAC4A0AA6ECECF81C6539CB7ABFB20AB2DA438CB48922DB972B6890B3C49`。
+- 冻结复验（`C:\Temp\dufsgui_shots\freeze_round7.py`）：
+  - 双地址启动后 `10.4.240.16:5099` 与 `127.0.0.1:5099` 均 HTTP 200；
+  - 冻结进程生成的 `%HOME%\webui\index.js` 含中文表头/删除确认，`index.css` 含覆盖标记；
+  - 冻结版二维码弹窗选择器存在，自动化点击下拉+↓/Enter 后链接区像素变化（`QR_SWITCHED True`）；
+  - 单地址冻结版弹窗 376×523，无选择器；停止后进程退出码 0，无 dufs 残留；
+  - 冻结服务页面截图 `round7-frozen-web-1280.png`（中文、无彩条）；运行/停止态
+    `round7-frozen-running.png` / `round7-frozen-stopped.png`。
+
+### 12.7 未验证 / 不能验证
+
+- `?noscript` 页、HTTP 错误正文、Basic 登录框保持英文（dufs 二进制/浏览器硬编码，非隐藏）。
+- 浏览器原生 `confirm/prompt/alert` 按钮文字（OK/取消）由浏览器语言决定，未做也不可做。
+- 未用真实手机扫码验证；二维码内容与链接一致性由单测断言（`qr_payload == 当前地址`）。
+- 冻结版未实际点击「复制链接」「保存 PNG」（按钮存在、代码路径与批次 6 相同，未改动）；
+  保存路径依赖系统文件对话框。
+- 仅在本机 Win11 / 125% 缩放下截图，未覆盖 Win10 与其他 DPI。
+

@@ -232,44 +232,103 @@ def _draw_matrix(canvas: tk.Canvas, matrix: list[list[bool]], scale: int,
     return side
 
 
-def build_qr_window(parent: tk.Misc, url: str,
-                    title: str = "共享二维码") -> tk.Toplevel:
-    """构建二维码窗口（不进入模态循环，便于测试）。"""
+def _qr_render(url: str) -> tuple[list[list[bool]], int, int]:
+    """(矩阵, 像素缩放, 边长)；同一地址只算一次，切换时直接复用。"""
     matrix = qr.encode(url)
     n = len(matrix)
     scale = max(4, min(8, 320 // (n + 8)))
-    side = (n + 8) * scale
-    width = max(360, side + 2 * SPACE["lg"] + SPACE["lg"])
+    return matrix, scale, (n + 8) * scale
+
+
+def build_qr_window(parent: tk.Misc, url: str,
+                    title: str = "共享二维码",
+                    urls: list[str] | None = None) -> tk.Toplevel:
+    """构建二维码窗口（不进入模态循环，便于测试）。
+
+    urls 为全部可访问地址（首项为主推地址）；多于一个时顶部出现地址选择器，
+    只有一个地址时不渲染选择器，避免单选项的冗余。
+    """
+    choices: list[str] = []
+    for candidate in [url] + list(urls or []):
+        value = (candidate or "").strip()
+        if value and value not in choices:
+            choices.append(value)
+    if not choices:
+        choices = [url]
+
+    # 预生成所有地址的矩阵：切换只是重绘，不会卡在编码上；窗口按最大尺寸固定，
+    # 避免切换时窗口跳动。
+    primary = choices[0]
+    cache = {choice: _qr_render(choice) for choice in choices}
+    max_side = max(entry[2] for entry in cache.values())
+    width = max(360, max_side + 2 * SPACE["lg"] + SPACE["lg"])
+    has_selector = len(choices) > 1
 
     win = _new_window(parent, title)
-    win.qr_payload = url            # 测试断言：二维码内容必须与链接一致
-    win.qr_matrix = matrix
+    win.qr_payload = primary       # 测试断言：二维码内容必须与链接一致
+    win.qr_matrix = cache[primary][0]
+    win.qr_choices = choices
+    win.qr_cache = cache
+    win.qr_selector = None
     body = _card(win)
+
+    var = tk.StringVar(value=primary)
+    win.qr_var = var
+    if has_selector:
+        # 弹窗顶部：网址选择器（切换后立即重绘，链接与保存内容同步）
+        ttk.Label(body, text="访问地址", style="MutedCard.TLabel").pack(anchor="w")
+        selector = ttk.Combobox(body, textvariable=var, values=choices,
+                                state="readonly")
+        selector.pack(fill="x", pady=(SPACE["xs"], SPACE["sm"]))
+        win.qr_selector = selector
+
     ttk.Label(body, text="扫码在手机上打开共享目录",
               style="CardTitle.TLabel").pack(anchor="w", pady=(0, SPACE["sm"]))
 
     qr_surface = RoundSurface(body, fill="#ffffff", radius=8,
                               bg=DARK["panel"], border=None,
-                              width=side + 8, autoheight=True)
+                              width=max_side + 8, autoheight=True)
     qr_surface.pack()
     canvas = tk.Canvas(qr_surface.body, bg="#ffffff", highlightthickness=0,
-                       bd=0, width=side, height=side)
+                       bd=0, width=max_side, height=max_side)
     canvas.pack()
-    _draw_matrix(canvas, matrix, scale)
+    _draw_matrix(canvas, cache[primary][0], cache[primary][1])
     win.qr_canvas = canvas
 
     link = RoundField(body, width=1, height=32)
-    link.insert(0, url)
+    link.insert(0, primary)
     link.configure(state="readonly")
     link.pack(fill="x", pady=(SPACE["sm"], SPACE["xs"]))
-    ttk.Label(body, text="手机需与电脑在同一网段；地址以当前共享链接为准",
+    hint = ("手机需与电脑在同一网段；切换地址可换二维码" if has_selector
+            else "手机需与电脑在同一网段")
+    ttk.Label(body, text=hint,
               style="MutedCard.TLabel", font=fonts()["caption"]).pack(anchor="w")
     win.qr_link = link
+
+    def select_url(_event=None) -> None:
+        target = str(var.get() or "")
+        if target not in cache:
+            return
+        matrix, scale, _side = cache[target]
+        win.qr_payload = target
+        win.qr_matrix = matrix
+        _draw_matrix(canvas, matrix, scale)
+        try:
+            link.configure(state="normal")
+            link.delete(0, "end")
+            link.insert(0, target)
+            link.configure(state="readonly")
+        except Exception:
+            pass
+
+    win.qr_select = select_url
+    if has_selector:
+        win.qr_selector.bind("<<ComboboxSelected>>", select_url)
 
     def copy_link() -> None:
         try:
             win.clipboard_clear()
-            win.clipboard_append(url)
+            win.clipboard_append(win.qr_payload)
         except Exception:
             pass
 
@@ -280,7 +339,7 @@ def build_qr_window(parent: tk.Misc, url: str,
         if not path:
             return
         try:
-            Path(path).write_bytes(qr.png_bytes(matrix, scale=8))
+            Path(path).write_bytes(qr.png_bytes(win.qr_matrix, scale=8))
         except OSError as e:
             show_error(win, "保存失败", f"{e}\n路径：{path}")
             return
@@ -297,11 +356,11 @@ def build_qr_window(parent: tk.Misc, url: str,
                 radius=8, kind="outline", bg=DARK["bg"],
                 font=ui_font(9)).pack(side="right", padx=(0, SPACE["sm"]))
     win.bind("<Escape>", lambda e: _finish(win, None))
-    win._qr_size = (width, side + 220)
+    win._qr_size = (width, max_side + 220 + (52 if has_selector else 0))
     return win
 
 
-def show_qr(parent: tk.Misc, url: str) -> None:
-    win = build_qr_window(parent, url)
+def show_qr(parent: tk.Misc, url: str, urls: list[str] | None = None) -> None:
+    win = build_qr_window(parent, url, urls=urls)
     width, height = win._qr_size
     _modal(win, width, height)

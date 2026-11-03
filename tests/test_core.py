@@ -316,14 +316,59 @@ class ConfigTest(unittest.TestCase):
                              (src / "index.js").read_text(encoding="utf-8"))
             self.assertEqual((src / "favicon.ico").read_bytes(), original_icon)
 
-    def test_overlay_noop_without_settings(self):
+    def test_overlay_without_settings_still_copies(self):
+        """没有自定义标题/图标时也要生成副本（汉化与去彩条依赖副本注入）。"""
         with tempfile.TemporaryDirectory() as td:
             src = Path(td) / "skin"
             src.mkdir()
             (src / "index.html").write_text("<html></html>", encoding="utf-8")
-            res = webtweak.prepare_overlay(str(src), "", "")
-            self.assertEqual(res.assets_dir, str(src))
-            self.assertFalse(res.applied)
+            dest = Path(td) / "out"
+            res = webtweak.prepare_overlay(str(src), "", "", dest_dir=dest)
+            self.assertEqual(res.assets_dir, str(dest))
+            self.assertTrue(dest.is_dir())
+            self.assertFalse(res.applied)   # 无可替换锚点，但副本仍然生成
+
+    def test_localize_real_skin_and_remove_top_bar(self):
+        """仓库官方皮肤：文案全量汉化、顶部彩条覆盖，且源目录不被改写。"""
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as td:
+            dest = Path(td) / "out"
+            res = webtweak.prepare_overlay(str(root / "assets"), "实验室共享",
+                                           "", dest_dir=dest)
+            self.assertTrue(res.applied)
+            js = (dest / "index.js").read_text(encoding="utf-8")
+            html = (dest / "index.html").read_text(encoding="utf-8")
+            css = (dest / "index.css").read_text(encoding="utf-8")
+            self.assertIn('const __DUFS_GUI_TITLE = "实验室共享";', js)
+            self.assertIn("`目录 ${DATA.href} · Dufs`", js)
+            self.assertIn("`删除「${name}」？`", js)
+            self.assertIn('text: "修改时间",', js)
+            self.assertNotIn('<th class="cell-actions">Actions</th>', js)
+            self.assertNotIn('title="Download file"', js)
+            self.assertIn('lang="zh-CN"', html)
+            self.assertIn('<th class="cell-name" colspan="2">上传任务</th>', html)
+            self.assertNotIn('title="Delete"', html)
+            self.assertIn("DufsGui 运行时覆盖", css)
+            self.assertIn("display: none !important;", css)
+            source_js = (root / "assets" / "index.js").read_text(encoding="utf-8")
+            self.assertIn('<th class="cell-actions">Actions</th>', source_js)
+            self.assertNotIn("DufsGui 运行时覆盖",
+                             (root / "assets" / "index.css").read_text(encoding="utf-8"))
+
+    def test_localize_refuses_partial_translation(self):
+        """官方结构变动时整文件跳过，不产出中英混杂页面。"""
+        only_one = '<th class="cell-actions">Actions</th>'
+        out, msg = webtweak.localize_index_js(only_one)
+        self.assertIsNone(out)
+        self.assertIn("结构已变化", msg)
+        self.assertIn("未汉化", msg)
+
+    def test_top_bar_override_is_idempotent(self):
+        css = "body { margin: 0; }"
+        once, _ = webtweak.patch_index_css(css)
+        twice, msg = webtweak.patch_index_css(once)
+        self.assertEqual(once, twice)
+        self.assertIn("已存在", msg)
 
 
 class RoundCornerTest(unittest.TestCase):

@@ -447,8 +447,45 @@ class UiSmokeTest(unittest.TestCase):
             self.assertEqual(len(win.qr_matrix), 25)
             self.assertEqual(len(win.qr_matrix[0]), 25)
             self.assertEqual(win.qr_link.get(), url)
+            self.assertIsNone(win.qr_selector)     # 单地址不显示选择器
         finally:
             win.destroy()
+
+    def test_qr_selector_switches_immediately_from_cache(self):
+        u1 = "http://10.4.240.16:5099/files/"
+        u2 = "http://127.0.0.1:5099/files/"
+        win = app_module.dialogs.build_qr_window(
+            self.gui, u1, urls=[u1, u2])
+        try:
+            self.assertEqual(win.qr_choices, [u1, u2])
+            self.assertIsNotNone(win.qr_selector)
+            self.assertEqual(set(win.qr_cache), {u1, u2})
+            self.assertEqual(win.qr_payload, u1)   # 默认主推第一项
+            win.qr_var.set(u2)                     # 模拟下拉切换
+            win.qr_select()
+            self.assertEqual(win.qr_payload, u2)
+            self.assertEqual(win.qr_link.get(), u2)
+            self.assertEqual(win.qr_matrix, win.qr_cache[u2][0])
+            self.assertEqual(set(win.qr_cache), {u1, u2})  # 复用缓存，不新增
+        finally:
+            win.destroy()
+
+    def test_qr_urls_running_first_and_deduplicated(self):
+        u1 = "http://10.4.240.16:5099/files/"
+        u2 = "http://127.0.0.1:5099/files/"
+        states = [mock.Mock(url=u1, running=True),
+                  mock.Mock(url=u1, running=True),
+                  mock.Mock(url=u2, running=False)]
+        self.gui.manager.states = states
+        try:
+            self.assertEqual(self.gui._qr_urls(), [u1])
+        finally:
+            self.gui.manager.states = []
+
+    def test_header_subtitle_removed(self):
+        layout = (ROOT / "ui" / "layout.py").read_text(encoding="utf-8")
+        self.assertNotIn("固定深色", layout)
+        self.assertNotIn("轻量文件共享", layout)
 
 
 

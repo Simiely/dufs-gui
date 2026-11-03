@@ -35,11 +35,8 @@ class MainLayoutMixin:
         header.columnconfigure(0, weight=1)
         ttk.Label(header, text="Dufs GUI", style="Title.TLabel").grid(
             row=0, column=0, sticky="w")
-        ttk.Label(header, text="固定深色 · 基于 dufs 的轻量文件共享",
-                  style="Subtitle.TLabel").grid(row=1, column=0, sticky="w",
-                                                pady=(SPACE["xs"], 0))
         actions = ttk.Frame(header)
-        actions.grid(row=0, column=1, rowspan=2, sticky="e", padx=(SPACE["md"], 0))
+        actions.grid(row=0, column=1, sticky="e", padx=(SPACE["md"], 0))
         self.btn_start = RoundButton(actions, "开启共享", command=self._start,
                                      width=98, kind="accent")
         self.btn_start.pack(side="left")
