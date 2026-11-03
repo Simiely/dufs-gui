@@ -1,6 +1,6 @@
 # AGENTS.md · 项目规则
 
-> 📌 **代码基线**：2026-11-02 v1.5.0（commit `7e5f8a8`，加入 Windows CI 的提交）
+> 📌 **代码基线**：2026-11-03 v1.6.0（批次 6：网页标题/favicon、文字二维码按钮、圆角）
 > 后续更新请追加新提交并在 CHANGELOG 记录；**不要引用已不在仓库历史中的 commit**。
 
 ## 技术栈
@@ -37,6 +37,11 @@
 11. **网卡排序只改 `core/netif.py`**。顺序为物理网卡 IPv4（有线优先、私有网段优先）→
     其他 IPv4（虚拟/VPN）→ IPv6 → 不可用 → `0.0.0.0` → 回环；`127.0.0.1` 永远最后，
     默认选中第一块已连接非回环网卡（只有回环可用时才默认回环）。
+12. **网页标题/favicon 只能改运行时副本**。`assets/` 由 `tools/fetch_skin.py` 覆盖生成，
+    直接改会被下次拉取冲掉。标题来自 `index.js` 的 3 处 ``document.title = `... - Dufs` ``，
+    图标来自 `index.html` 引用的 `favicon.ico`；启动时复制到 `%APPDATA%\DufsGui\webui`
+    再注入（`core/webtweak.py`），`--assets` 指向副本。GUI 窗口标题固定「Dufs GUI」，
+    不要和网页标题混为一谈。
 
 ## 约定
 
@@ -45,7 +50,9 @@
   滚动条、下拉列表、Spinbox、Text 等原生/半原生控件必须显式配色，禁止残留白色部件
 - 视觉按 macOS 深色 token（`DARK` / `SPACE` / `RADIUS` / `fonts()`）：背景色差分层次、
   8pt 栅格、控件高约 32px、三级字号；**不引入第三方 UI 库，不用 emoji 当图标**。
-  Tk 做不到真实圆角/毛玻璃/动画，不要为此堆自绘，层次用色差 + 1px 低对比描边表达
+  Tk 控件本身没有圆角：需要时用 `ui/roundrect.py` 的预渲染角块（纯标准库，控件 8px /
+  容器 12px，圆角外与底层同色），窗口/对话框圆角走 DWM（Win11 生效，Win10 降级直角）；
+  不要用 `SetWindowRgn`（无抗锯齿，spike 已否决），也不要给做不到的控件加假边框
 - 无口令共享是**合法路径且完全静默**：不弹窗、不写状态栏、不打警告日志；只在文档描述
   "不填口令即为匿名访问"，不要在任何地方加运行时提醒
 - 除 PyInstaller 外**不引入第三方运行时依赖**（保持打包体积小、可靠性高）
@@ -63,7 +70,7 @@
 
 ```bat
 python -m pip install -r requirements.txt   :: 构建依赖（PyInstaller 6.22.3）
-build.bat              :: 打正式单文件 exe（dist\DufsGui-v1.5.0.exe）
+build.bat              :: 打正式单文件 exe（dist\DufsGui-v1.6.0.exe）
 build_debug.bat        :: 诊断版：环境体检 + 控制台 + 抓输出（排错先跑它）
 run_debug.bat          :: 只运行已有 exe 并抓取全部输出
 python main.py         :: 源码直接跑

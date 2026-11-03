@@ -6,11 +6,17 @@
 
 from __future__ import annotations
 
+import math
 import tkinter as tk
 from tkinter import ttk
 
+from .raster import photo, rounded_png
+
 # 已创建的 Combobox 实例，创建/刷新时需要逐个配置下拉列表
 _COMBOS: list[ttk.Combobox] = []
+
+#: 圆角复选框位图缓存（fill, border, tick）
+_BOX_CACHE: dict[tuple, object] = {}
 
 # ---------- 复选框：自绘指示器 ----------
 # 为什么不用 indicatorcolor：clam 的对勾是硬编码深色，而 indicatorcolor 在部分
@@ -24,18 +30,27 @@ _IMAGE_REFS: list = []
 _TICK = ((4, 7), (5, 8), (6, 9), (7, 10), (8, 9), (9, 8), (10, 7), (11, 6), (12, 5))
 
 
+def _tick_mask(x: float, y: float) -> bool:
+    """对勾的像素覆盖判定：两段折线，笔画约 2px。"""
+    segs = (((4, 7), (8, 11)), ((8, 11), (12, 5)))
+    for (x0, y0), (x1, y1) in segs:
+        dx, dy = x1 - x0, y1 - y0
+        t = max(0.0, min(1.0, ((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy)))
+        if math.hypot(x - (x0 + t * dx), y - (y0 + t * dy)) <= 1.0:
+            return True
+    return False
+
+
 def _make_box_image(fill: str, border: str, tick: str | None) -> "tk.PhotoImage":
-    """画一个 16x16 的方框（可选带对勾）。整块不透明，避免透明像素的坑。"""
-    img = tk.PhotoImage(width=16, height=16)
-    img.put(border, (0, 0, 15, 0))
-    img.put(border, (0, 15, 15, 15))
-    img.put(border, (0, 1, 0, 14))
-    img.put(border, (15, 1, 15, 14))
-    img.put(fill, (1, 1, 14, 14))
-    if tick:
-        for x, y in _TICK:
-            img.put(tick, (x, y))
-            img.put(tick, (x, y + 1))
+    """16x16 圆角方框（半径 4），圆角外透明，可叠在任意行底色上。"""
+    key = (fill, border, tick)
+    img = _BOX_CACHE.get(key)
+    if img is None:
+        img = photo(rounded_png(16, 16, 4, fill, None, border, 1,
+                                transparent=True,
+                                tick=_tick_mask if tick else None,
+                                tick_fill=tick or "#ffffff"))
+        _BOX_CACHE[key] = img
     return img
 
 
@@ -284,6 +299,15 @@ def apply_theme(root: tk.Misc) -> dict[str, str]:
               bordercolor=[("focus", c["accent"])],
               lightcolor=[("focus", c["accent"])],
               darkcolor=[("focus", c["accent"])])
+    # 圆角输入框内嵌的原生 Entry：自身不画边框，焦点环由外层 RoundField 绘制
+    style.configure("Field.TEntry", fieldbackground=c["field"], foreground=c["fg"],
+                    bordercolor=c["field"], lightcolor=c["field"],
+                    darkcolor=c["field"], insertcolor=c["fg"],
+                    padding=(8, 2), relief="flat", borderwidth=0)
+    style.map("Field.TEntry",
+              bordercolor=[("focus", c["field"])],
+              lightcolor=[("focus", c["field"])],
+              darkcolor=[("focus", c["field"])])
     # Combobox：输入框本体 + 下拉箭头。下拉列表本体不能用 style 配，见下方
     style.configure("TCombobox", fieldbackground=c["field"], foreground=c["fg"],
                     background=c["field"], bordercolor=c["border"], padding=(10, 6),
@@ -298,6 +322,19 @@ def apply_theme(root: tk.Misc) -> dict[str, str]:
               selectbackground=[("readonly", c["field"])],
               selectforeground=[("readonly", c["fg"])],
               bordercolor=[("focus", c["accent"])])
+    style.configure("Field.TCombobox", fieldbackground=c["field"],
+                    foreground=c["fg"], background=c["field"],
+                    bordercolor=c["field"], padding=(8, 2), arrowcolor=c["muted"],
+                    arrowsize=12, lightcolor=c["field"], darkcolor=c["field"],
+                    insertcolor=c["fg"], relief="flat", borderwidth=0)
+    style.map("Field.TCombobox",
+              fieldbackground=[("readonly", c["field"]), ("disabled", c["panel"])],
+              foreground=[("readonly", c["fg"]), ("disabled", c["muted"])],
+              background=[("readonly", c["field"]), ("active", c["field"])],
+              arrowcolor=[("disabled", c["muted"]), ("active", c["fg"])],
+              bordercolor=[("focus", c["field"])],
+              lightcolor=[("focus", c["field"])],
+              darkcolor=[("focus", c["field"])])
     apply_option_db(root, c, f["body"])
 
     # Checkbutton 已改用 tk.Checkbutton（ThemedCheckbutton），不经过 ttk。
@@ -455,6 +492,24 @@ def enable_windows_dark_titlebar(hwnd: int) -> None:
                 pass
     except Exception:
         pass
+
+
+def enable_windows_rounded_corners(hwnd: int) -> bool:
+    """Win11：请求 DWM 圆角（DWMWA_WINDOW_CORNER_PREFERENCE=33）。
+
+    Win10 没有该属性，调用返回失败；此时保持直角，功能不受影响。
+    返回是否成功，便于自检/日志。
+    """
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        root = user32.GetAncestor(hwnd, 2) or hwnd
+        preference = ctypes.c_int(2)  # DWMWCP_ROUND
+        hr = ctypes.windll.dwmapi.DwmSetWindowAttribute(  # type: ignore[attr-defined]
+            root, 33, ctypes.byref(preference), ctypes.sizeof(preference))
+        return hr == 0
+    except Exception:
+        return False
 
 
 

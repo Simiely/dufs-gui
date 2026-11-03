@@ -9,12 +9,15 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from core import webtweak
 from core.config import RENDER_MODES
-from core.theme import (DARK, SPACE, ThemedCheckbutton, ThemedCombobox,
-                        apply_theme, enable_windows_dark_titlebar, fonts)
+from core.theme import (DARK, SPACE, ThemedCheckbutton, apply_theme,
+                        enable_windows_dark_titlebar,
+                        enable_windows_rounded_corners, fonts)
 from core.winpos import center_on_parent
 
 from .common import ui_font
+from .roundrect import RoundButton, RoundField, RoundPanel, RoundScrollbar
 
 
 class AdvancedDialogMixin:
@@ -50,7 +53,8 @@ class AdvancedDialogMixin:
         canvas = tk.Canvas(wrap, highlightthickness=0, borderwidth=0, bg=c["bg"])
         canvas.grid(row=0, column=0, sticky="nsew")
         self._adv_canvas = canvas
-        sb = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
+        sb = RoundScrollbar(wrap, orient="vertical", command=canvas.yview,
+                            bg=c["bg"], thickness=10)
         sb.grid(row=0, column=1, sticky="ns")
         canvas.configure(yscrollcommand=sb.set)
 
@@ -82,13 +86,9 @@ class AdvancedDialogMixin:
         cards: list[ttk.Frame] = []
 
         def card(title: str) -> ttk.Frame:
-            holder = tk.Frame(outer, bg=c["panel"], highlightbackground=c["border"],
-                              highlightthickness=1, bd=0)
-            holder.grid(row=len(cards), column=0, sticky="ew", pady=(0, SPACE["md"]))
-            holder.columnconfigure(0, weight=1)
-            inner = ttk.Frame(holder, style="Card.TFrame",
-                              padding=(SPACE["lg"], SPACE["md"]))
-            inner.grid(row=0, column=0, sticky="nsew")
+            panel = RoundPanel(outer, bg=c["bg"], radius=10)
+            panel.grid(row=len(cards), column=0, sticky="ew", pady=(0, SPACE["md"]))
+            inner = panel.body
             inner.columnconfigure(1, weight=1)
             ttk.Label(inner, text=title, style="CardTitle.TLabel").grid(
                 row=0, column=0, columnspan=3, sticky="w", pady=(0, SPACE["sm"]))
@@ -96,17 +96,19 @@ class AdvancedDialogMixin:
             return inner
 
         def field(box: ttk.Frame, row: int, text: str, var, browse=None,
-                  show: str | None = None) -> ttk.Entry:
+                  show: str | None = None) -> RoundField:
             ttk.Label(box, text=text, style="MutedCard.TLabel").grid(
                 row=row, column=0, sticky="w", pady=(SPACE["xs"], 0))
-            entry = ttk.Entry(box, textvariable=var, show=show)
+            entry = RoundField(box, textvariable=var, show=show, width=1,
+                               height=32, bg=c["panel"])
             entry.grid(row=row, column=1, sticky="ew", padx=(SPACE["sm"], 0),
                        pady=(SPACE["xs"], 0))
             if browse is not None:
-                ttk.Button(box, text="选择…", style="Ghost.TButton",
-                           command=browse).grid(row=row, column=2,
-                                                padx=(SPACE["sm"], 0),
-                                                pady=(SPACE["xs"], 0))
+                RoundButton(box, "选择…", command=browse, width=64, height=28,
+                            radius=8, kind="outline", bg=c["panel"],
+                            font=ui_font(9)).grid(row=row, column=2,
+                                                  padx=(SPACE["sm"], 0),
+                                                  pady=(SPACE["xs"], 0))
             return entry
 
         def hint(box: ttk.Frame, row: int, text: str) -> None:
@@ -115,19 +117,49 @@ class AdvancedDialogMixin:
                 row=row, column=1, columnspan=2, sticky="w",
                 padx=(SPACE["sm"], 0), pady=(SPACE["xs"], 0))
 
-        # ---- 界面 ----
-        box = card("界面")
-        self.v_window_title.set(self.app_cfg.window_title)
-        ent_title = field(box, 1, "窗口标题", self.v_window_title)
-        ttk.Button(box, text="应用", style="Accent.TButton",
-                   command=self._apply_window_title_setting).grid(
+        # ---- 网页外观（浏览器标签页标题 / 图标）----
+        box = card("网页外观（浏览器标签页）")
+        ttk.Label(box, text="网页标题", style="MutedCard.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(SPACE["xs"], 0))
+        self.ent_web_title = RoundField(box, textvariable=self.v_web_title,
+                                        width=1, height=32, bg=c["panel"])
+        self.ent_web_title.grid(row=1, column=1, sticky="ew",
+                                padx=(SPACE["sm"], 0), pady=(SPACE["xs"], 0))
+        RoundButton(box, "应用", command=self._apply_web_meta, width=56, height=28,
+                    radius=8, kind="accent", bg=c["panel"],
+                    font=ui_font(9, "bold")).grid(
             row=1, column=2, padx=(SPACE["sm"], 0), pady=(SPACE["xs"], 0))
-        self.lbl_title_hint = ttk.Label(
-            box, text="留空使用默认「Dufs GUI」；最长 48 字符，应用后立即保存",
-            style="MutedCard.TLabel", font=f["caption"], justify="left")
-        self.lbl_title_hint.grid(row=2, column=1, columnspan=2, sticky="w",
-                                 padx=(SPACE["sm"], 0), pady=(SPACE["xs"], 0))
-        ent_title.bind("<Return>", lambda e: self._apply_window_title_setting())
+        ttk.Label(box, text="留空使用 dufs 官方标题；最长 48 字符。"
+                            "只改浏览器标签，不改 GUI 窗口标题",
+                  style="MutedCard.TLabel", font=f["caption"],
+                  justify="left").grid(row=2, column=1, columnspan=2, sticky="w",
+                                       padx=(SPACE["sm"], 0), pady=(SPACE["xs"], 0))
+
+        ttk.Label(box, text="站点图标", style="MutedCard.TLabel").grid(
+            row=3, column=0, sticky="w", pady=(SPACE["sm"], 0))
+        RoundField(box, textvariable=self.v_favicon_path, state="readonly",
+                   width=1, height=32, bg=c["panel"]).grid(
+            row=3, column=1, sticky="ew", padx=(SPACE["sm"], 0),
+            pady=(SPACE["sm"], 0))
+        fav_btns = ttk.Frame(box, style="Card.TFrame")
+        fav_btns.grid(row=3, column=2, sticky="e", padx=(SPACE["sm"], 0),
+                      pady=(SPACE["sm"], 0))
+        RoundButton(fav_btns, "选择…", command=self._pick_favicon, width=60,
+                    height=28, radius=8, kind="outline", bg=c["panel"],
+                    font=ui_font(9)).pack(side="left")
+        RoundButton(fav_btns, "默认", command=self._reset_favicon, width=48,
+                    height=28, radius=8, kind="outline", bg=c["panel"],
+                    font=ui_font(9)).pack(side="left", padx=(SPACE["xs"], 0))
+        ttk.Label(box, text="选择 .ico 文件；留空使用 dufs 官方图标。"
+                            "需勾选「网页美化界面」并在下次开启共享后生效",
+                  style="MutedCard.TLabel", font=f["caption"],
+                  justify="left").grid(row=4, column=1, columnspan=2, sticky="w",
+                                       padx=(SPACE["sm"], 0), pady=(SPACE["xs"], 0))
+        self.lbl_web_hint = ttk.Label(box, text="", style="MutedCard.TLabel",
+                                      font=f["caption"])
+        self.lbl_web_hint.grid(row=5, column=1, columnspan=2, sticky="w",
+                               padx=(SPACE["sm"], 0), pady=(SPACE["xs"], 0))
+        self.ent_web_title.bind("<Return>", lambda e: self._apply_web_meta())
 
         # ---- 路径前缀 ----
         box = card("路径前缀")
@@ -161,8 +193,9 @@ class AdvancedDialogMixin:
         hint(box, 2, "逗号分隔，支持通配，如 .git,*.log,tmp")
         ttk.Label(box, text="渲染模式", style="MutedCard.TLabel").grid(
             row=3, column=0, sticky="w", pady=(SPACE["sm"], 0))
-        ThemedCombobox(box, textvariable=self.v_render, state="readonly",
-                       values=list(RENDER_MODES), width=28).grid(
+        RoundField(box, kind="combo", textvariable=self.v_render,
+                   state="readonly", values=list(RENDER_MODES), width=180,
+                   height=32, bg=c["panel"]).grid(
             row=3, column=1, sticky="w", padx=(SPACE["sm"], 0),
             pady=(SPACE["sm"], 0))
 
@@ -174,9 +207,12 @@ class AdvancedDialogMixin:
         cblog.grid(row=1, column=0, columnspan=3, sticky="w", pady=(SPACE["xs"], 0))
         ttk.Label(box, text="日志文件", style="MutedCard.TLabel").grid(
             row=2, column=0, sticky="w", pady=(SPACE["sm"], 0))
-        ttk.Entry(box, textvariable=self.v_logpath).grid(
+        RoundField(box, textvariable=self.v_logpath, width=1, height=32,
+                   bg=c["panel"]).grid(
             row=2, column=1, sticky="ew", padx=(SPACE["sm"], 0), pady=(SPACE["sm"], 0))
-        ttk.Button(box, text="选择…", style="Ghost.TButton", command=self._pick_log).grid(
+        RoundButton(box, "选择…", command=self._pick_log, width=64, height=28,
+                    radius=8, kind="outline", bg=c["panel"],
+                    font=ui_font(9)).grid(
             row=2, column=2, padx=(SPACE["sm"], 0), pady=(SPACE["sm"], 0))
 
         # ---- HTTPS ----
@@ -202,11 +238,13 @@ class AdvancedDialogMixin:
         box = card("dufs 程序")
         ttk.Label(box, text="程序路径", style="MutedCard.TLabel").grid(
             row=1, column=0, sticky="w", pady=(SPACE["xs"], 0))
-        ttk.Entry(box, textvariable=self.v_dufs, state="readonly").grid(
+        RoundField(box, textvariable=self.v_dufs, state="readonly", width=1,
+                   height=32, bg=c["panel"]).grid(
             row=1, column=1, sticky="ew", padx=(SPACE["sm"], 0),
             pady=(SPACE["xs"], 0))
-        ttk.Button(box, text="更换…", style="Ghost.TButton",
-                   command=self._pick_dufs).grid(
+        RoundButton(box, "更换…", command=self._pick_dufs, width=64, height=28,
+                    radius=8, kind="outline", bg=c["panel"],
+                    font=ui_font(9)).grid(
             row=1, column=2, padx=(SPACE["sm"], 0), pady=(SPACE["xs"], 0))
 
         # 底部固定条：关闭按钮始终可见，不用滚到最底下才能退出
@@ -218,8 +256,9 @@ class AdvancedDialogMixin:
         self.lbl_adv_hint = ttk.Label(foot, text="", style="Muted.TLabel",
                                       font=ui_font(9))
         self.lbl_adv_hint.grid(row=0, column=0, sticky="w")
-        ttk.Button(foot, text="关闭", width=10, command=win.destroy).grid(
-            row=0, column=1)
+        RoundButton(foot, "关闭", command=win.destroy, width=72, height=28,
+                    radius=8, kind="outline", bg=c["bg"],
+                    font=ui_font(9)).grid(row=0, column=1)
         self._refresh_adv_hint()
 
         def on_close():
@@ -258,6 +297,7 @@ class AdvancedDialogMixin:
         try:
             win.update_idletasks()
             enable_windows_dark_titlebar(win.winfo_id())
+            enable_windows_rounded_corners(win.winfo_id())
         except Exception:
             pass
         win.grab_set()

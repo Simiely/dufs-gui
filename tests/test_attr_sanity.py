@@ -54,9 +54,26 @@ TK_BUILTINS = {
     "winfo_atom", "winfo_atomname", "winfo_cells", "winfo_colormapfull",
     "winfo_interps", "winfo_manager", "winfo_name", "winfo_parent",
     "winfo_server", "winfo_toplevel",
+    # tk.Canvas 自带方法（ui/roundrect.py 的 Canvas 子类会直接调用）
+    "bbox", "canvasx", "canvasy", "coords", "create_arc", "create_bitmap",
+    "create_image", "create_line", "create_oval", "create_polygon",
+    "create_rectangle", "create_text", "create_window", "delete",
+    "find_withtag", "itemcget", "itemconfigure", "move", "tag_bind",
+    "tag_configure", "xview", "xview_scroll", "yview", "yview_moveto",
+    "yview_scroll",
     # tk 内部
     "tk", "master", "children", "report_callback_exception",
 }
+
+
+def _add_targets(node, assigned: set[str]) -> None:
+    """`self.a, self.b = ...` 的 Tuple 目标也要算已赋值。"""
+    if isinstance(node, ast.Attribute):
+        if isinstance(node.value, ast.Name) and node.value.id == "self":
+            assigned.add(node.attr)
+    elif isinstance(node, (ast.Tuple, ast.List)):
+        for elt in node.elts:
+            _add_targets(elt, assigned)
 
 
 def _collect(path: Path) -> tuple[set[str], set[str], set[str]]:
@@ -70,16 +87,20 @@ def _collect(path: Path) -> tuple[set[str], set[str], set[str]]:
         if not isinstance(node, ast.ClassDef):
             continue
         for item in node.body:
+            # 类级常量（如 RoundButton._PALETTES）也是合法赋值
+            if isinstance(item, ast.Assign):
+                for t in item.targets:
+                    if isinstance(t, ast.Name):
+                        assigned.add(t.id)
+            elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                assigned.add(item.target.id)
             if not isinstance(item, ast.FunctionDef):
                 continue
             methods.add(item.name)
             for sub in ast.walk(item):
                 if isinstance(sub, ast.Assign):
                     for t in sub.targets:
-                        if (isinstance(t, ast.Attribute)
-                                and isinstance(t.value, ast.Name)
-                                and t.value.id == "self"):
-                            assigned.add(t.attr)
+                        _add_targets(t, assigned)
                 elif isinstance(sub, ast.AnnAssign):
                     t = sub.target
                     if (isinstance(t, ast.Attribute)

@@ -1,10 +1,11 @@
-"""固定高度的网卡勾选列表。
+"""固定高度的网卡勾选列表（折叠在「共享地址」卡片里）。
 
 为什么不用下拉：多选下拉在不同平台上的键盘/焦点行为差异很大，而且展开时会
-遮挡其他控件。这里用 Canvas + 内嵌 Frame 固定显示 5 行，超出用深色滚动条，
-窗口高度不随网卡数量变化。
+遮挡其他控件。这里用 Canvas + 内嵌 Frame 固定显示 3 行，超出用圆角滚动条，
+展开网卡明细时不会把地址列表挤没。
 
 键盘：Tab 进入列表，↑/↓ 移动当前行，空格/回车切换勾选，再按 Tab 离开。
+每行的 hover/焦点底色是 6px 圆角块，文字用 Canvas 绘制（无背景方块）。
 """
 
 from __future__ import annotations
@@ -17,9 +18,10 @@ from core.netif import NetIf
 from core.theme import DARK, SPACE, fonts
 
 from .common import emoji_font
+from .roundrect import RoundScrollbar, _RoundItems
 
 ROW_HEIGHT = 30
-VISIBLE_ROWS = 5
+VISIBLE_ROWS = 3
 
 
 class BindCheckList(ttk.Frame):
@@ -39,7 +41,8 @@ class BindCheckList(ttk.Frame):
         self.canvas = tk.Canvas(self, bg=c["panel"], highlightthickness=0,
                                 borderwidth=0, height=height,
                                 takefocus=True, cursor="hand2")
-        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.vsb = RoundScrollbar(self, orient="vertical", command=self.canvas.yview,
+                                  thickness=10)
         self.canvas.configure(yscrollcommand=self.vsb.set)
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.vsb.grid(row=0, column=1, sticky="ns", padx=(SPACE["xs"], 0))
@@ -92,6 +95,15 @@ class BindCheckList(ttk.Frame):
         from core.netif import default_binds
         self.set_selection(default_binds(self.items))
 
+    def select_all(self) -> None:
+        """「全部」：优先勾选所有具体网卡；没有具体网卡时退化为通配地址。"""
+        addresses = [item.address for item in self.items
+                     if item.bindable and item.address and not item.is_wildcard]
+        if not addresses:
+            addresses = [item.address for item in self.items
+                         if item.bindable and item.address]
+        self.set_selection(addresses)
+
     def focus_list(self) -> None:
         try:
             self.canvas.focus_set()
@@ -117,41 +129,38 @@ class BindCheckList(ttk.Frame):
     def _make_row(self, index: int, item: NetIf, var: tk.BooleanVar) -> dict:
         c = DARK
         f = fonts()
-        row = tk.Frame(self.inner, bg=c["panel"], height=ROW_HEIGHT)
+        row = tk.Canvas(self.inner, bg=c["panel"], height=ROW_HEIGHT, bd=0,
+                        highlightthickness=0)
         row.grid(row=index, column=0, sticky="ew")
-        row.grid_propagate(False)
         self.inner.columnconfigure(0, weight=1)
-        row.columnconfigure(2, weight=1)
+
+        hover_pill = _RoundItems(row, 6, c["card"], c["panel"])
+        focus_pill = _RoundItems(row, 6, c["sel"], c["panel"])
+        for pill in (hover_pill, focus_pill):
+            pill.hide()
 
         from core.theme import ThemedCheckbutton
         cb = ThemedCheckbutton(row, variable=var, bg_key="panel",
                                takefocus=False, onvalue=True, offvalue=False)
-        cb.grid(row=0, column=0, padx=(2, SPACE["xs"]), pady=SPACE["xs"], sticky="w")
+        cb_id = row.create_window(9, ROW_HEIGHT / 2, anchor="w", window=cb)
 
-        # 图标单独一列、固定宽度，避免不同 emoji 的实际字宽不同把后面的列挤歪
-        icon = tk.Label(row, text=item.icon, bg=c["panel"],
-                        fg=c["fg"] if item.bindable else c["muted"],
-                        font=emoji_font(11), anchor="center", width=2)
-        icon.grid(row=0, column=1, sticky="w", padx=(0, SPACE["xs"]))
-
-        name = tk.Label(row, text=item.display_name, bg=c["panel"],
-                        fg=c["fg"] if item.bindable else c["muted"],
-                        font=f["body"], anchor="w", width=11)
-        name.grid(row=0, column=2, sticky="ew")
-
+        color = c["fg"] if item.bindable else c["muted"]
+        icon = row.create_text(34, ROW_HEIGHT / 2, anchor="w", text=item.icon,
+                               fill=color, font=emoji_font(11))
+        name_text = (item.display_name or "")[:11]
+        name = row.create_text(52, ROW_HEIGHT / 2, anchor="w", text=name_text,
+                               fill=color, font=f["body"])
         address = item.address or "无地址"
-        addr = tk.Label(row, text=address, bg=c["panel"],
-                        fg=c["fg"] if item.bindable else c["muted"],
-                        font=f["mono"], anchor="w", width=14)
-        addr.grid(row=0, column=3, sticky="w", padx=(SPACE["sm"], SPACE["sm"]))
+        addr = row.create_text(158, ROW_HEIGHT / 2, anchor="w", text=address,
+                               fill=color, font=f["mono"])
+        status = row.create_text(10, ROW_HEIGHT / 2, anchor="e",
+                                 text=item.status_text,
+                                 fill=c["muted"] if item.bindable else c["border"],
+                                 font=f["caption"])
 
-        status = tk.Label(row, text=item.status_text, bg=c["panel"],
-                          fg=c["muted"] if item.bindable else c["border"],
-                          font=f["caption"], anchor="e", width=12)
-        status.grid(row=0, column=4, sticky="e", padx=(0, SPACE["sm"]))
-
-        widgets = (row, icon, name, addr, status)
-        for widget in widgets:
+        row.bind("<Configure>", lambda e, r=row, s=status, hp=hover_pill,
+                 fp=focus_pill: self._place_row(r, s, hp, fp))
+        for widget in (row,):
             widget.bind("<Button-1>", lambda e, i=index: self._click_row(i))
             widget.bind("<Enter>", lambda e, i=index: self._hover_row(i, True))
             widget.bind("<Leave>", lambda e, i=index: self._hover_row(i, False))
@@ -160,7 +169,19 @@ class BindCheckList(ttk.Frame):
         if not item.bindable or not self._enabled:
             cb.configure(state="disabled")
         return {"row": row, "cb": cb, "labels": (icon, name, addr, status),
-                "item": item, "row_index": index}
+                "item": item, "row_index": index, "hover": hover_pill,
+                "focus": focus_pill, "hovered": False}
+
+    def _place_row(self, row, status, hover_pill, focus_pill) -> None:
+        w = row.winfo_width()
+        if w <= 10:
+            return
+        for pill in (hover_pill, focus_pill):
+            pill.place(2, 1, w - 2, ROW_HEIGHT - 1)
+        try:
+            row.coords(status, w - 10, ROW_HEIGHT / 2)
+        except Exception:
+            pass
 
     def _destroy_rows(self) -> None:
         for row in self._rows:
@@ -222,31 +243,29 @@ class BindCheckList(ttk.Frame):
         self._paint_rows()
 
     def _hover_row(self, index: int, entering: bool) -> None:
-        if index == self._focus_index:
-            return
         if not (0 <= index < len(self._rows)):
             return
-        bg = DARK["sel"] if entering else DARK["panel"]
-        self._set_row_bg(index, bg)
+        self._rows[index]["hovered"] = entering
+        self._paint_row(index)
 
-    def _set_row_bg(self, index: int, bg: str) -> None:
+    def _paint_row(self, index: int) -> None:
         row = self._rows[index]
         try:
-            row["row"].configure(bg=bg)
-            for label in row["labels"]:
-                label.configure(bg=bg)
-            row["cb"].configure(bg=bg, activebackground=bg)
+            if index == self._focus_index:
+                row["hover"].hide()
+                row["focus"].show()
+            elif row["hovered"]:
+                row["focus"].hide()
+                row["hover"].show()
+            else:
+                row["hover"].hide()
+                row["focus"].hide()
         except Exception:
             pass
 
     def _paint_rows(self) -> None:
-        for index, row in enumerate(self._rows):
-            bg = DARK["sel"] if index == self._focus_index else DARK["panel"]
-            self._set_row_bg(index, bg)
-            try:
-                row["cb"].configure(bg=bg)
-            except Exception:
-                pass
+        for index in range(len(self._rows)):
+            self._paint_row(index)
 
     def _notify(self) -> None:
         if self._on_change:

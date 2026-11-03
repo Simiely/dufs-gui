@@ -265,18 +265,42 @@ class Checkbutton(Widget):
 
 
 class Canvas(Widget):
-    """够用的 Canvas 桩：只支持 create_window / itemconfigure / bbox / yview。"""
+    """够用的 Canvas 桩：画布类自绘控件（RoundButton / RoundPanel）也能构建。"""
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         self._items = {}
+        self._seq = 0
 
-    def create_window(self, pos, window=None, anchor="nw"):
-        self._items[1] = window
-        return 1
+    def _new_id(self):
+        self._seq += 1
+        return self._seq
+
+    def create_window(self, x, y=None, window=None, anchor="nw"):
+        iid = self._new_id()
+        self._items[iid] = window
+        return iid
 
     def create_rectangle(self, *a, **kw):
-        return 1
+        iid = self._new_id()
+        self._items[iid] = ("rect", a, kw)
+        return iid
+
+    def create_image(self, *a, **kw):
+        iid = self._new_id()
+        self._items[iid] = ("image", a, kw)
+        return iid
+
+    def create_text(self, *a, **kw):
+        iid = self._new_id()
+        self._items[iid] = ("text", a, kw)
+        return iid
+
+    def coords(self, iid, *a):
+        item = self._items.get(iid)
+        if isinstance(item, tuple) and len(item) == 3:
+            self._items[iid] = (item[0], a, item[2])
+        return ()
 
     def delete(self, *_a):
         pass

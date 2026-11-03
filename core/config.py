@@ -12,30 +12,10 @@ from pathlib import Path
 from typing import Any
 
 from .netutil import normalize_prefix
+from . import webtweak
 
 #: 配置文件 schema 版本。v1 = 无版本号的旧配置；v2 = 增加版本号并规范化字段。
 CONFIG_VERSION = 2
-
-#: 窗口标题默认值与上限。新增字段不升 schema：旧配置没有该字段时按默认值读取。
-DEFAULT_WINDOW_TITLE = "Dufs GUI"
-MAX_WINDOW_TITLE_LEN = 48
-
-
-def sanitize_window_title(value: str) -> str:
-    """去掉控制字符与首尾空白；空串表示使用默认标题。"""
-    cleaned = "".join(ch for ch in str(value) if ch >= " " and ch != "\x7f")
-    return cleaned.strip()
-
-
-def check_window_title(value: str) -> tuple[bool, str]:
-    """校验用户输入的窗口标题，返回 ``(是否可用, 清理后的值或错误说明)``。"""
-    raw = str(value or "")
-    if any(ch < " " or ch == "\x7f" for ch in raw):
-        return False, "窗口标题不能包含控制字符"
-    clean = sanitize_window_title(raw)
-    if len(clean) > MAX_WINDOW_TITLE_LEN:
-        return False, f"窗口标题最长 {MAX_WINDOW_TITLE_LEN} 个字符"
-    return True, clean
 
 RENDER_MODES = {
     "自动列表（默认）": "",
@@ -87,6 +67,11 @@ class ServerConfig:
     custom_ui: bool = True
     #: 外部皮肤目录（如第三方 dufs-material-assets），留空则用内置皮肤
     assets_dir: str = ""
+    #: 浏览器标签页标题（空 = dufs 官方 "Index of … - Dufs"）。
+    #: 运行时复制皮肤并注入；不改 tools/fetch_skin.py 拉取的仓库资产。
+    web_title: str = ""
+    #: 自定义 favicon.ico 路径（空 = 官方图标）；同样在运行时覆盖。
+    favicon_path: str = ""
     hidden: str = ""
     render_mode: str = "自动列表（默认）"
     save_log: bool = False
@@ -298,6 +283,9 @@ class ServerConfig:
             ok, msg = validate_assets_dir(self.assets_dir)
             if not ok:
                 errs.append(f"网页皮肤目录无效：{msg}")
+        ok, msg = webtweak.check_title(self.web_title)
+        if not ok:
+            errs.append(msg)
         return errs
 
     # ---------- 序列化 ----------
@@ -342,6 +330,9 @@ class ServerConfig:
             elif isinstance(default, str):
                 if isinstance(value, str):
                     setattr(cfg, f.name, value)
+        # 网页标题只保留可打印字符；路径去掉首尾空白，旧配置缺字段时为空（用官方值）
+        cfg.web_title = webtweak.sanitize_title(cfg.web_title)
+        cfg.favicon_path = cfg.favicon_path.strip()
         # ---- 多地址升级 ----
         # 新格式用 binds 列表；旧配置只有 bind，读入后自动升级为单元素列表。
         raw_binds = data.get("binds")
@@ -376,15 +367,9 @@ class AppConfig:
     current: str = ""
     recent_paths: list[str] = field(default_factory=list)
     current_config: dict[str, Any] = field(default_factory=dict)
-    #: 自定义窗口标题（同时决定任务栏名称）；空串表示使用 DEFAULT_WINDOW_TITLE。
-    #: 与 schema 版本无关：旧配置没有该字段时按默认值读取，不需要迁移。
-    window_title: str = ""
     config_version: int = CONFIG_VERSION
     #: 载入时的告警（迁移/坏配置恢复）。不落盘，只在界面日志里提示一次。
     notice: str = field(default="", compare=False, repr=False)
-
-    def effective_window_title(self) -> str:
-        return sanitize_window_title(self.window_title) or DEFAULT_WINDOW_TITLE
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -441,23 +426,11 @@ class AppConfig:
             if raw_cc is not None:
                 notes.append("current_config 类型无效，已清空")
 
-        raw_title = data.get("window_title")
-        window_title = ""
-        if isinstance(raw_title, str):
-            ok, clean = check_window_title(raw_title)
-            if ok:
-                window_title = clean
-            else:
-                notes.append(f"窗口标题无效（{clean}），已恢复默认")
-        elif raw_title is not None:
-            notes.append("window_title 类型无效，已忽略")
-
         cfg = cls(
             profiles=profiles,
             current=current,
             recent_paths=recent,
             current_config=current_config,
-            window_title=window_title,
             config_version=CONFIG_VERSION,
         )
         cfg.notice = "；".join(notes)

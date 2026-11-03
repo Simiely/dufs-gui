@@ -322,24 +322,43 @@ class UiSmokeTest(unittest.TestCase):
             self.gui.adv_win = None
 
     # ---------------- 本轮新增交互 ----------------
-    def test_window_title_persists_and_falls_back(self):
-        """标题写盘后重启仍生效；空值回落默认标题。"""
-        from core.config import load_config
+    def test_web_title_applies_and_persists(self):
+        """网页标题保存到配置；空值回落官方标题，不影响 GUI 窗口标题。"""
+        self.gui.v_web_title.set("实验室文件共享")
+        self.gui._apply_web_meta()
+        self.assertEqual(self.gui.app_cfg.current_config["web_title"],
+                         "实验室文件共享")
 
-        old = self.gui.app_cfg.window_title
-        try:
-            self.gui.v_window_title.set("实验室文件共享")
-            self.gui._apply_window_title_setting()
-            self.assertEqual(self.gui.v_app_title.get(), "实验室文件共享")
-            self.assertEqual(load_config().window_title, "实验室文件共享")
+        self.gui.v_web_title.set("   ")
+        self.gui._apply_web_meta()
+        self.assertEqual(self.gui.app_cfg.current_config["web_title"], "")
 
-            self.gui.v_window_title.set("   ")
-            self.gui._apply_window_title_setting()
-            self.assertEqual(self.gui.v_app_title.get(), "Dufs GUI")
-            self.assertEqual(load_config().window_title, "")
-        finally:
-            self.gui.v_window_title.set(old)
-            self.gui._apply_window_title_setting()
+    def test_gui_window_title_is_fixed(self):
+        """上一轮误做的 GUI 窗口标题设置必须已移除。"""
+        src = (ROOT / "app.py").read_text(encoding="utf-8")
+        self.assertIn('self.title("Dufs GUI")', src)
+        self.assertNotIn("effective_window_title", src)
+        self.assertNotIn("v_window_title", src)
+
+    def test_qr_button_is_text_outline(self):
+        """二维码入口是文字 + 描边按钮，尺寸与 32px 控件一致。"""
+        from ui.roundrect import RoundButton
+
+        btn = self.gui.btn_qr
+        self.assertIsInstance(btn, RoundButton)
+        self.assertEqual(btn.text, "二维码")
+        self.assertEqual(int(btn.cget("width")), 74)
+        self.assertEqual(int(btn.cget("height")), 32)
+        self.assertEqual(btn["state"], "normal")
+
+    def test_round_button_states(self):
+        """hover / pressed / disabled 状态必须有独立预渲染图。"""
+        btn = self.gui.btn_qr
+        self.assertEqual(set(btn._images),
+                         {"normal", "hover", "pressed", "disabled"})
+        btn.set_state("disabled")
+        self.assertEqual(btn["state"], "disabled")
+        btn.set_state("normal")
 
     def test_failure_detail_hidden_until_error(self):
         from core.instances import InstanceState

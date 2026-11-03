@@ -41,6 +41,39 @@ def _read_version() -> str:
 VER = _read_version()
 NAME = f"DufsGui-v{VER}" + ("-debug" if DEBUG else "")
 
+
+def _version_info():
+    """Windows 文件属性（exe 详细信息里的版本），非 Windows 返回 None。"""
+    if not IS_WIN:
+        return None
+    try:
+        from PyInstaller.utils.win32.versioninfo import (
+            FixedFileInfo, StringFileInfo, StringStruct, StringTable,
+            VarFileInfo, VarStruct, VSVersionInfo)
+    except Exception:
+        return None
+    parts = [int(p) for p in VER.split(".") if p.isdigit()][:3]
+    while len(parts) < 3:
+        parts.append(0)
+    ver_tuple = tuple(parts) + (0,)
+    return VSVersionInfo(
+        ffi=FixedFileInfo(filevers=ver_tuple, prodvers=ver_tuple,
+                          mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1,
+                          subtype=0x0, date=(0, 0)),
+        kids=[StringFileInfo([StringTable("040904B0", [
+            StringStruct("CompanyName", "Dufs GUI"),
+            StringStruct("FileDescription", "Dufs 文件共享 · GUI 封装"),
+            StringStruct("FileVersion", VER),
+            StringStruct("InternalName", "DufsGui"),
+            StringStruct("OriginalFilename", NAME + ".exe"),
+            StringStruct("ProductName", "Dufs GUI"),
+            StringStruct("ProductVersion", VER),
+        ])]), VarFileInfo([VarStruct("Translation", [1033, 1200])])],
+    )
+
+
+VS_VERSION = _version_info()
+
 DUFS_NAME = "dufs.exe" if IS_WIN else "dufs"
 DUFS = os.path.join(ROOT, "bin", DUFS_NAME)
 
@@ -88,8 +121,9 @@ hiddenimports = [
     "core", "core.config", "core.dufsbin", "core.netutil", "core.server",
     "core.theme", "core.crashlog", "core.winpos",
     # 批次 2 拆分出的模块：显式声明，避免冻结环境漏收集
-    "core.launch", "core.runtime",
-    "ui", "ui.common", "ui.form", "ui.layout", "ui.advanced",
+    "core.launch", "core.runtime", "core.webtweak",
+    "ui", "ui.common", "ui.form", "ui.layout", "ui.advanced", "ui.dialog",
+    "ui.roundrect",
 ]
 
 # tkinter 子模块：显式声明比依赖自动分析更保险，但只在构建机真有 tkinter 时声明，
@@ -148,6 +182,7 @@ if ONEDIR:
         bootloader_ignore_signals=False,
         strip=False,
         upx=False,
+        version=VS_VERSION,
         console=DEBUG,
         disable_windowed_traceback=False,
     )
@@ -173,6 +208,7 @@ else:
         strip=False,
         upx=False,          # 关掉 UPX：压缩壳容易被杀软误报
         runtime_tmpdir=None,
+        version=VS_VERSION,
         console=DEBUG,      # 诊断版保留控制台，正式版隐藏
         disable_windowed_traceback=False,
         argv_emulation=False,

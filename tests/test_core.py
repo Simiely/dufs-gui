@@ -9,8 +9,10 @@ import json
 import os
 import queue
 import socket
+import struct
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -30,13 +32,35 @@ def ui_source() -> str:
     return "\n".join(p.read_text(encoding="utf-8") for p in UI_SOURCES)
 
 
+def png_pixels(data: bytes):
+    """解析本项目自写的 PNG（全部 filter=0），返回 (w, h, 每行 RGBA 字节)。"""
+    w = h = 0
+    idat = b""
+    pos = 8
+    while pos < len(data):
+        length = struct.unpack(">I", data[pos:pos + 4])[0]
+        tag = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + length]
+        if tag == b"IHDR":
+            w, h = struct.unpack(">II", body[:8])
+        elif tag == b"IDAT":
+            idat += body
+        pos += 12 + length
+    raw = zlib.decompress(idat)
+    stride = w * 4
+    rows = []
+    for y in range(h):
+        assert raw[y * (stride + 1)] == 0, "只支持 filter=0"
+        rows.append(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+    return w, h, rows
+
+
 import core as core_pkg  # noqa: E402
-from core import crashlog, dufsbin, server  # noqa: E402
+from core import crashlog, dufsbin, server, webtweak  # noqa: E402
 from core.dufsbin import verify_assets_dir, webui_dir  # noqa: E402
-from core.config import (CONFIG_VERSION, DEFAULT_WINDOW_TITLE,
-                         MAX_WINDOW_TITLE_LEN, AppConfig, ServerConfig,
-                         check_window_title, is_loopback_bind, load_config,
-                         normalize_prefix, save_config)
+from core.config import (CONFIG_VERSION, AppConfig, ServerConfig,
+                         is_loopback_bind, load_config, normalize_prefix,
+                         save_config)
 from core.netutil import find_free_port, port_in_use  # noqa: E402
 from core.launch import build_launch_plan  # noqa: E402
 
@@ -153,6 +177,13 @@ class VersionTest(unittest.TestCase):
     def test_spec_reads_version_from_core(self):
         spec = (REPO / "DufsGui.spec").read_text(encoding="utf-8")
         self.assertIn("_read_version", spec, "spec 应从 core 读版本号")
+        self.assertIn("VS_VERSION", spec, "spec 应写入 Windows 版本资源")
+
+    def test_docs_mention_current_version(self):
+        readme = (REPO / "README.md").read_text(encoding="utf-8")
+        guide = (REPO / "docs" / "使用指南.md").read_text(encoding="utf-8")
+        self.assertIn(f"DufsGui-v{core_pkg.APP_VERSION}.exe", readme)
+        self.assertIn(f"v{core_pkg.APP_VERSION}", guide)
 
 
 class ConfigTest(unittest.TestCase):
@@ -219,44 +250,119 @@ class ConfigTest(unittest.TestCase):
             self.assertEqual(back.recent_paths, ["/a"])
             self.assertEqual(back.profiles["x"]["port"], 1)
 
-    def test_window_title_roundtrip_and_default(self):
-        """标题写入配置后可读回；空串回落默认标题，不升 schema。"""
-        with tempfile.TemporaryDirectory() as td:
-            p = Path(td) / "config.json"
-            save_config(AppConfig(window_title="实验室共享"), p)
-            back = load_config(p)
-            self.assertEqual(back.window_title, "实验室共享")
-            self.assertEqual(back.effective_window_title(), "实验室共享")
-            self.assertEqual(back.config_version, CONFIG_VERSION)
-
-            save_config(AppConfig(window_title=""), p)
-            back = load_config(p)
-            self.assertEqual(back.window_title, "")
-            self.assertEqual(back.effective_window_title(), DEFAULT_WINDOW_TITLE)
-
-    def test_window_title_validation(self):
-        """空值可用（默认标题）；控制字符与超长必须拒绝。"""
-        self.assertEqual(check_window_title("   "), (True, ""))
-        self.assertEqual(check_window_title("  Dufs  ") , (True, "Dufs"))
-        ok, msg = check_window_title("bad\x00title")
+    def test_web_title_validation(self):
+        """网页标题做清洗与长度限制；空值表示使用 dufs 官方标题。"""
+        self.assertEqual(webtweak.sanitize_title("   "), "")
+        self.assertEqual(webtweak.sanitize_title("  实验室  "), "实验室")
+        self.assertEqual(webtweak.sanitize_title("bad\x00title"), "badtitle")
+        ok, msg = webtweak.check_title("x" * (webtweak.MAX_TITLE_LEN + 1))
         self.assertFalse(ok)
-        self.assertIn("控制字符", msg)
-        ok, msg = check_window_title("x" * (MAX_WINDOW_TITLE_LEN + 1))
-        self.assertFalse(ok)
-        self.assertIn("最长", msg)
-        self.assertTrue(check_window_title("x" * MAX_WINDOW_TITLE_LEN)[0])
+        self.assertIn(str(webtweak.MAX_TITLE_LEN), msg)
+        self.assertTrue(webtweak.check_title("x" * webtweak.MAX_TITLE_LEN)[0])
 
-    def test_old_config_without_title_loads_default(self):
-        """旧配置没有 window_title 字段：按默认值读取，无需迁移版本。"""
+    def test_web_title_roundtrip_keeps_schema(self):
+        """新增的网页外观字段是可选字段，不需要升 schema。"""
+        cfg = ServerConfig(share_path="/tmp", web_title="实验室共享")
+        back = ServerConfig.from_dict(cfg.to_dict())
+        self.assertEqual(back.web_title, "实验室共享")
+        self.assertEqual(CONFIG_VERSION, 2, "新增可选字段不应升 schema")
+
+    def test_old_config_without_web_fields(self):
+        cfg = ServerConfig.from_dict({"share_path": "/tmp"})
+        self.assertEqual(cfg.web_title, "")
+        self.assertEqual(cfg.favicon_path, "")
+
+    def test_invalid_web_title_rejected(self):
+        cfg = ServerConfig(share_path="/tmp",
+                           web_title="x" * (webtweak.MAX_TITLE_LEN + 1))
+        self.assertTrue(any("网页标题" in e for e in cfg.validate()))
+
+    def test_patch_index_js_only_when_official_layout(self):
+        """官方 3 条标题语句齐全才改写；自定义标题优先、空值回落官方标题。"""
+        js = "\n".join(webtweak._OFFICIAL_TITLES.values())
+        patched, _msg = webtweak.patch_index_js(js, "实验室共享")
+        self.assertIsNotNone(patched)
+        self.assertIn('const __DUFS_GUI_TITLE = "实验室共享";', patched)
+        self.assertIn("document.title = __DUFS_GUI_TITLE || `Index of", patched)
+        self.assertEqual(patched.count("document.title = __DUFS_GUI_TITLE ?"),
+                         2)
+        self.assertIn("· 编辑", patched)
+        self.assertIn("· 预览", patched)
+        bad, msg = webtweak.patch_index_js("nothing here - Dufs`", "t")
+        self.assertIsNone(bad)
+        self.assertIn("结构已变化", msg)
+
+    def test_overlay_writes_copy_not_source(self):
+        """覆盖只写到目标副本；皮肤源目录（fetch 产物）必须保持原样。"""
         with tempfile.TemporaryDirectory() as td:
-            p = Path(td) / "config.json"
-            p.write_text(json.dumps({"profiles": {},
-                                     "current_config": {"share_path": "/tmp"}},
-                                    ensure_ascii=False), encoding="utf-8")
-            cfg = load_config(p)
-            self.assertEqual(cfg.window_title, "")
-            self.assertEqual(cfg.effective_window_title(), DEFAULT_WINDOW_TITLE)
-            self.assertEqual(cfg.config_version, CONFIG_VERSION)
+            src = Path(td) / "skin"
+            src.mkdir()
+            (src / "index.html").write_text("<html>__ASSETS_PREFIX__</html>",
+                                            encoding="utf-8")
+            js = "\n".join(webtweak._OFFICIAL_TITLES.values())
+            (src / "index.js").write_text(js, encoding="utf-8")
+            original_icon = b"\x00\x00\x01\x00" + b"\x01" * 10
+            (src / "favicon.ico").write_bytes(original_icon)
+            icon = Path(td) / "my.ico"
+            icon.write_bytes(b"\x00\x00\x01\x00" + b"\x02" * 10)
+            dest = Path(td) / "out"
+            res = webtweak.prepare_overlay(str(src), "实验室共享", str(icon),
+                                           dest_dir=dest)
+            self.assertTrue(res.applied)
+            self.assertIn("__DUFS_GUI_TITLE",
+                          (dest / "index.js").read_text(encoding="utf-8"))
+            self.assertEqual((dest / "favicon.ico").read_bytes(), icon.read_bytes())
+            self.assertNotIn("__DUFS_GUI_TITLE",
+                             (src / "index.js").read_text(encoding="utf-8"))
+            self.assertEqual((src / "favicon.ico").read_bytes(), original_icon)
+
+    def test_overlay_noop_without_settings(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "skin"
+            src.mkdir()
+            (src / "index.html").write_text("<html></html>", encoding="utf-8")
+            res = webtweak.prepare_overlay(str(src), "", "")
+            self.assertEqual(res.assets_dir, str(src))
+            self.assertFalse(res.applied)
+
+
+class RoundCornerTest(unittest.TestCase):
+    """圆角角块像素级回归：四个角的外侧必须是背景色，不能有浅色缺口。"""
+
+    BG = (30, 30, 30)
+    FILL = (35, 35, 37)
+    BORDER = (58, 58, 60)
+
+    def test_four_orientations_have_no_light_notch(self):
+        from ui import roundrect
+
+        r = 12
+        outside = {0: (0, 0), 1: (r - 1, 0), 2: (0, r - 1), 3: (r - 1, r - 1)}
+        for corner, (px, py) in outside.items():
+            _w, _h, rows = png_pixels(roundrect._corner_png(
+                r, r, self.FILL, self.BG, corner, self.BORDER, 1))
+            pixel = tuple(rows[py][px * 4:px * 4 + 3])
+            self.assertEqual(pixel, self.BG,
+                             f"corner {corner} 的圆角外像素应等于背景色")
+
+    def test_corner_inside_is_panel_fill(self):
+        from ui import roundrect
+
+        _w, _h, rows = png_pixels(roundrect._corner_png(
+            12, 12, self.FILL, self.BG, 0, self.BORDER, 1))
+        pixel = tuple(rows[11][11 * 4:11 * 4 + 3])
+        self.assertEqual(pixel, self.FILL, "角块内侧应填面板底色")
+
+    def test_corner_edge_is_antialiased(self):
+        from ui import roundrect
+
+        _w, _h, rows = png_pixels(roundrect._corner_png(
+            12, 12, self.FILL, self.BG, 0, self.BORDER, 1))
+        # 圆角弧线上应出现既非背景也非纯色的过渡像素（4x4 超采样）
+        hit = any(any(self.BG[i] < rows[y][x * 4 + i] < self.BORDER[i]
+                      for i in range(3))
+                  for y in range(12) for x in range(12))
+        self.assertTrue(hit, "角块边缘没有过渡色，抗锯齿未生效")
 
 
 class AuthConfigTest(unittest.TestCase):

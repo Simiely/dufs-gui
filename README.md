@@ -18,7 +18,7 @@
 
 ## 快速开始
 
-**已有构建产物**：双击 `dist\DufsGui-v1.5.0.exe` 即可（onefile 首启自解压约 1–3 秒）。
+**已有构建产物**：双击 `dist\DufsGui-v1.6.0.exe` 即可（onefile 首启自解压约 1–3 秒）。
 
 **从源码构建**：双击 `build.bat`，它自动完成「取 dufs → 打包 → `--selftest` → 生成校验和」。
 只有缺 PyInstaller 时会停下并打印一行可复制的安装命令
@@ -48,7 +48,8 @@
 | 网页端能力 | 上传 / 删除 / 搜索 / 打包下载 / 符号链接 / CORS，勾选即生效 |
 | 配置方案 | 多套「目录 + 端口 + 能力」存成方案随时切换 |
 | 界面 | 固定深色（含滚动条、下拉列表、Windows 标题栏与自绘对话框），不提供浅色模式；按 macOS 深色设计 token 排版（色差分层、8pt 栅格、32px 控件、系统蓝 `#0a84ff`）；「开启共享 / 停止」固定在标题行右侧 |
-| 窗口标题 | 默认「Dufs GUI」，可在高级设置「界面」卡片自定义（最长 48 字，空值回落默认），保存后重启仍生效 |
+| 网页标题与图标 | 浏览器标签页标题可自定义（最长 48 字，空值用 dufs 官方标题），可换本地 `.ico` 站点图标；需勾选「网页美化界面」，下次开启共享生效。GUI 窗口标题固定「Dufs GUI」 |
+| 圆角 | 主按钮与卡片/面板抗锯齿圆角（8px / 12px），Win11 下窗口与对话框由 DWM 圆角；Win10 保持直角，功能不受影响 |
 | 日志 | 实时回显，可清空 / 导出；启动时把等效命令行以 `[命令]` 前缀写入日志（口令显示为 `user:***@/:rw`），可直接复制排查 |
 | 网页皮肤 | dufs 官方 assets v0.47.0 + CSS 覆盖层：官方 HTML/JS 保证功能，CSS 做深色配色与视觉改造；升级 dufs 后用 `tools/fetch_skin.py` 同步 |
 
@@ -58,9 +59,9 @@
 
 ## 版本
 
-当前 **v1.5.0**。版本号唯一定义在 [`core/__init__.py`](core/__init__.py)，
-打包产物名（`dist\DufsGui-v1.5.0.exe`）与构建信息从它派生；窗口标题默认「Dufs GUI」，
-可在高级设置里自定义，不再拼接版本号。
+当前 **v1.6.0**。版本号唯一定义在 [`core/__init__.py`](core/__init__.py)，
+打包产物名（`dist\DufsGui-v1.6.0.exe`）与构建信息从它派生；GUI 窗口标题固定
+「Dufs GUI」，浏览器标签页标题在高级设置「网页外观」里配置。
 
 ## 构建可复现与产物校验
 
@@ -72,7 +73,7 @@
 - 同时生成 `dist\SHA256SUMS`（sha256sum 格式）：exe + 关键构建输入
   （`bin\dufs.exe`、`assets\`、`licenses\`、`requirements.txt`、spec、两份校验和清单）。
   除 exe 外的条目是**打进包内的输入**，用于审计来源，不单独分发。
-- 校验：`Get-FileHash dist\DufsGui-v1.5.0.exe -Algorithm SHA256`，
+- 校验：`Get-FileHash dist\DufsGui-v1.6.0.exe -Algorithm SHA256`，
   或在仓库根目录执行 `sha256sum -c dist/SHA256SUMS`。
 
 ## 测试

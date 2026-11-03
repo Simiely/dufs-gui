@@ -10,20 +10,22 @@ import queue
 import time
 import tkinter as tk
 import webbrowser
+from dataclasses import replace
 from pathlib import Path
 from tkinter import filedialog, ttk
 
 from core import APP_VERSION  # 单一真源，见 core/__init__.py
-from core import dufsbin
-from core.config import (AppConfig, ServerConfig, check_window_title, config_file,
-                         load_config, save_config)
+from core import dufsbin, webtweak
+from core.config import (AppConfig, ServerConfig, config_file, load_config,
+                         save_config)
 from core.health import HealthMonitor
 from core.instances import InstanceManager
 from core.launch import build_launch_plans
 from core.netif import apply_saved, list_interfaces
 from core.netutil import find_free_port, port_in_use
 from core.runtime import DufsRuntime
-from core.theme import DARK, apply_theme, enable_windows_dark_titlebar
+from core.theme import (DARK, apply_theme, enable_windows_dark_titlebar,
+                        enable_windows_rounded_corners)
 from ui import dialog as dialogs
 from ui.advanced import AdvancedDialogMixin
 from ui.bindlist import BindCheckList
@@ -52,7 +54,8 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.app_cfg: AppConfig = load_config()
-        self.title(self.app_cfg.effective_window_title())
+        # GUI 窗口标题固定：用户可定制的是浏览器标签页标题（高级设置里）
+        self.title("Dufs GUI")
         self.geometry("1040x780")
         self.minsize(960, 720)
 
@@ -70,11 +73,10 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         self._build_vars()
         self._build_ui()
         self._apply_theme()
-        self._apply_window_title()
         self._restore()
         self._refresh_preview()
-        # 窗口真正映射后再设一次 DWM 深色标题栏（部分系统在 map 前设置不生效）
-        self.after(250, lambda: enable_windows_dark_titlebar(self.winfo_id()))
+        # 窗口真正映射后再设一次 DWM 深色标题栏/圆角（部分系统在 map 前设置不生效）
+        self.after(250, self._apply_window_chrome)
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(150, self._drain_queues)
@@ -125,12 +127,6 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
                                 highlightcolor=c["well"],
                                 selectbackground=c["accent"],
                                 selectforeground=c["accent_fg"])
-        for sb in getattr(self, "log_scrollbars", ()):
-            try:
-                sb.configure(background=c["card"], troughcolor=c["well"],
-                             bordercolor=c["well"], arrowcolor=c["muted"])
-            except Exception:
-                pass
         self.dot.configure(bg=c["panel"], fg=c["muted"])
 
         if self.adv_win is not None and self.adv_win.winfo_exists():
@@ -144,48 +140,64 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
 
         try:
             self.update_idletasks()
-            enable_windows_dark_titlebar(self.winfo_id())
+            self._apply_window_chrome()
         except Exception:
             pass
+
+    def _apply_window_chrome(self) -> None:
+        """深色标题栏 + Win11 圆角；Win10 不支持圆角时静默保持直角。"""
+        enable_windows_dark_titlebar(self.winfo_id())
+        enable_windows_rounded_corners(self.winfo_id())
 
     def _set_status_color(self, kind: str = "idle") -> None:
         color = {"run": self.colors["ok"], "err": self.colors["danger"],
                  "warn": self.colors["warn"]}.get(kind, self.colors["muted"])
         self.dot.configure(fg=color, bg=self.colors["panel"])
 
-    # ---------------- 窗口标题 ----------------
-    def _apply_window_title(self) -> None:
-        """窗口标题 / 任务栏名称 / 顶部标题统一取自配置（空值回落默认）。"""
-        title = self.app_cfg.effective_window_title()
-        try:
-            self.title(title)
-        except Exception:
-            pass
-        try:
-            self.v_app_title.set(title)
-        except Exception:
-            pass
-
-    def _apply_window_title_setting(self) -> None:
-        """高级设置里的「应用」：校验 → 落盘 → 立即生效。"""
-        ok, msg = check_window_title(self.v_window_title.get())
+    # ---------------- 网页外观（浏览器标签页） ----------------
+    def _apply_web_meta(self) -> None:
+        """校验并保存网页标题；实际注入在下次开启共享时发生。"""
+        ok, title = webtweak.check_title(self.v_web_title.get())
         if not ok:
-            self._set_title_hint(msg, error=True)
+            dialogs.show_warning(self.adv_win or self, "网页标题无效", title)
             return
-        self.app_cfg.window_title = msg
-        self._apply_window_title()
+        self.v_web_title.set(title)
         self._save()
-        if msg:
-            self._set_title_hint(f"已应用：{msg}")
-        else:
-            self._set_title_hint("已恢复默认标题（Dufs GUI）")
-        self._log(f"窗口标题已更新：{self.app_cfg.effective_window_title()}")
-
-    def _set_title_hint(self, text: str, error: bool = False) -> None:
+        text = (f"网页标题已保存：{title}" if title
+                else "网页标题已恢复为 dufs 官方标题")
+        self._log(f"{text}（下次开启共享生效）")
         try:
-            self.lbl_title_hint.configure(
-                text=text, foreground=self.colors["danger"] if error
-                else self.colors["muted"])
+            self.lbl_web_hint.configure(text=f"{text}；下次开启共享生效",
+                                        foreground=self.colors["ok"])
+        except Exception:
+            pass
+
+    def _pick_favicon(self) -> None:
+        p = filedialog.askopenfilename(
+            title="选择站点图标（favicon）",
+            filetypes=[("图标", "*.ico"), ("所有文件", "*.*")])
+        if not p:
+            return
+        data, msg = webtweak.favicon_bytes(p)
+        if data is None:
+            dialogs.show_error(self, "图标不可用", msg)
+            return
+        self.v_favicon_path.set(p)
+        self._save()
+        self._log(f"站点图标已保存：{p}（下次开启共享生效）")
+        try:
+            self.lbl_web_hint.configure(text="站点图标已保存；下次开启共享生效",
+                                        foreground=self.colors["ok"])
+        except Exception:
+            pass
+
+    def _reset_favicon(self) -> None:
+        self.v_favicon_path.set("")
+        self._save()
+        self._log("站点图标已恢复为 dufs 官方图标（下次开启共享生效）")
+        try:
+            self.lbl_web_hint.configure(text="已恢复官方图标；下次开启共享生效",
+                                        foreground=self.colors["muted"])
         except Exception:
             pass
 
@@ -202,6 +214,7 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         rec.insert(0, path)
         self.app_cfg.recent_paths = rec[:10]
         self.cmb_recent.configure(values=self.app_cfg.recent_paths)
+        self._refresh_recent_visibility()
 
     def _use_recent(self, _e=None) -> None:
         val = self.cmb_recent.get()
@@ -209,11 +222,84 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
             self.v_path.set(val)
 
     def _on_binds_change(self, count: int) -> None:
+        self._pending_binds = self.bindlist.selected()
+        self._refresh_preview()
+        self._apply_binds_expanded()
+
+    def _apply_binds_expanded(self) -> None:
+        """折叠态只留一行弱化摘要；展开态显示勾选明细。会话内记住。"""
+        if not hasattr(self, "binds_holder"):
+            return
+        expanded = bool(getattr(self, "_binds_expanded", False))
+        if expanded:
+            self.binds_holder.grid()
+            text = "收起网卡明细"
+        else:
+            self.binds_holder.grid_remove()
+            n = len(self._address_rows()) if hasattr(self, "addr_list") else 0
+            text = f"{n} 个地址 · 单击查看网卡" if n else "单击查看网卡"
         try:
-            self.lbl_binds.configure(text=f"共享网卡（已选 {count} 个）")
+            self.lbl_binds_toggle.configure(text=text)
         except Exception:
             pass
-        self._refresh_preview()
+
+    def _toggle_binds(self) -> None:
+        self._binds_expanded = not getattr(self, "_binds_expanded", False)
+        self._apply_binds_expanded()
+
+    def _select_all_binds(self) -> None:
+        self.bindlist.select_all()
+        self._log("已勾选全部可用网卡")
+
+    def _address_rows(self) -> list[tuple[str, str, str]]:
+        """(url, 网卡名, 状态)：网址是主信息，网卡名只作右侧弱化注释。"""
+        if self.manager.states:
+            return [(st.url, st.display, st.status)
+                    for st in self.manager.states if st.url]
+        cfg = self.current_config()
+        if not cfg.share_path:
+            return []
+        labels = self._current_labels()
+        rows = []
+        for bind in cfg.effective_binds():
+            rows.append((cfg.url(bind=bind), labels.get(bind, bind), "预览"))
+        return rows
+
+    def _refresh_addr_list(self) -> None:
+        if not hasattr(self, "addr_list"):
+            return
+        rows = self._address_rows()
+        self.addr_list.set_rows(rows)
+        self._apply_binds_expanded()
+
+    def _on_addr_overflow(self, hidden: int) -> None:
+        if not hasattr(self, "lbl_addr_count"):
+            return
+        try:
+            self.lbl_addr_count.configure(
+                text=f"还有 {hidden} 个未显示" if hidden else "")
+        except Exception:
+            pass
+
+    def _refresh_recent_visibility(self) -> None:
+        """没有历史路径时收起「最近」一行，把高度让给地址列表。"""
+        if not hasattr(self, "cmb_recent"):
+            return
+        # 只有 1 条（通常就是当前路径）不值得单独占一行；2 条以上才显示
+        has = len(self.app_cfg.recent_paths) >= 2
+        for widget in (self.lbl_recent, self.cmb_recent):
+            try:
+                if has:
+                    widget.grid()
+                else:
+                    widget.grid_remove()
+            except Exception:
+                pass
+
+    def _copy_one_url(self, url: str) -> None:
+        self.clipboard_clear()
+        self.clipboard_append(url)
+        self._log(f"已复制：{url}")
 
     def _on_perm_change(self, var: tk.BooleanVar, _text: str) -> None:
         self._refresh_preview()
@@ -296,6 +382,7 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
                 self.v_url.set(cfg.url())
             else:
                 self.v_url.set("—")
+        self._refresh_addr_list()
 
     # ---------------- 方案 ----------------
     def _reload_profiles(self, select: str = "") -> None:
@@ -365,6 +452,7 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         if self.v_path.get():
             self._add_recent(self.v_path.get())
         self.cmb_recent.configure(values=self.app_cfg.recent_paths)
+        self._refresh_recent_visibility()
         self._reload_profiles(self.app_cfg.current)
         info = self.runtime.info
         if info is None:
@@ -424,9 +512,21 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
             else:
                 return
 
+        # 网页标题/favicon：复制皮肤到用户目录再注入，不改仓库/fetch 产物
+        launch_cfg = cfg
+        skin_dir = self.skin_dir()
+        if cfg.custom_ui and (cfg.web_title or cfg.favicon_path):
+            overlay = webtweak.prepare_overlay(
+                skin_dir, cfg.web_title, cfg.favicon_path)
+            for note in overlay.notes:
+                self._log(f"[网页] {note}")
+            if overlay.assets_dir:
+                skin_dir = overlay.assets_dir
+                launch_cfg = replace(cfg, assets_dir=overlay.assets_dir)
+
         group = build_launch_plans(
-            cfg, binary=info.path, dufs_version=self.runtime.semver,
-            skin_dir=self.skin_dir(), skin_version=dufsbin.assets_version(),
+            launch_cfg, binary=info.path, dufs_version=self.runtime.semver,
+            skin_dir=skin_dir, skin_version=dufsbin.assets_version(),
             config_path=str(config_file()))
         for line in group.skin_logs:
             self._log(line)
@@ -458,7 +558,8 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
             self._update_detail_area(force_expand=True)
             return
 
-        self.v_status.set(self.manager.status_text)
+        # 地址数量由左栏列表表达，状态栏只回状态，避免同屏重复
+        self.v_status.set("运行中" if running == total else self.manager.status_text)
         self._set_status_color("run" if running == total else "warn")
         self._set_config_enabled(False)
         self.btn_start.configure(state="disabled")
@@ -543,11 +644,13 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
                 row=0, column=0, sticky="ew", pady=(0, 2))
             return
 
+        # 网址已由左栏地址列表承担；这里只列异常地址，避免重复与撑破卡片。
+        problems = [st for st in states if not st.running and st.status != "启动中"]
         colors = {"运行中": self.colors["ok"], "启动中": self.colors["warn"],
                   "无响应": self.colors["warn"], "失败": self.colors["danger"]}
         icons = {item.address: item.icon for item in self.bindlist.items
                  if item.address}
-        for i, st in enumerate(states):
+        for i, st in enumerate(problems):
             row = tk.Frame(host, bg=self.colors["panel"])
             row.grid(row=i, column=0, sticky="ew", pady=(0, 2))
             row.columnconfigure(2, weight=1)
@@ -561,18 +664,13 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
             tk.Label(row, text=f"{st.display} · {st.bind}", bg=self.colors["panel"],
                      fg=self.colors["fg"], font=("Microsoft YaHei UI", 9),
                      anchor="w").grid(row=0, column=2, sticky="w")
-            # 失败原因只在下方「失败详情」里写一次；列表右侧仅回状态，避免重复长文案
-            detail_text = "失败" if st.status == "失败" else (st.detail or st.status)
-            tk.Label(row, text=detail_text, bg=self.colors["panel"],
+            tk.Label(row, text=st.status, bg=self.colors["panel"],
                      fg=colors.get(st.status, self.colors["muted"]),
                      font=("Microsoft YaHei UI", 9), anchor="e").grid(
                 row=0, column=3, sticky="e", padx=(8, 0))
-            tk.Label(row, text=st.url, bg=self.colors["panel"],
-                     fg=self.colors["muted"], font=("Consolas", 8),
-                     anchor="w").grid(row=1, column=2, columnspan=2,
-                                      sticky="ew", pady=(0, 4))
         urls = [st.url for st in states if st.running]
         self.v_url.set("  ".join(urls) if urls else "—")
+        self._refresh_addr_list()
 
     # ---------------- 浏览器 / 剪贴板 ----------------
     def _open_browser(self) -> None:

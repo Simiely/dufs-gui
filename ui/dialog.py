@@ -17,8 +17,11 @@ from tkinter import filedialog, ttk
 
 from core import qr
 from core.theme import (DARK, SPACE, apply_theme, enable_windows_dark_titlebar,
-                        fonts)
+                        enable_windows_rounded_corners, fonts)
 from core.winpos import center_on_parent
+
+from .common import ui_font
+from .roundrect import RoundButton, RoundField, RoundPanel, RoundSurface
 
 
 def _new_window(parent: tk.Misc, title: str) -> tk.Toplevel:
@@ -32,12 +35,10 @@ def _new_window(parent: tk.Misc, title: str) -> tk.Toplevel:
 
 
 def _card(win: tk.Toplevel) -> ttk.Frame:
-    holder = tk.Frame(win, bg=DARK["panel"], highlightbackground=DARK["border"],
-                      highlightthickness=1, bd=0)
-    holder.pack(fill="both", expand=True, padx=SPACE["lg"], pady=(SPACE["lg"], 0))
-    body = ttk.Frame(holder, style="Card.TFrame", padding=(SPACE["lg"], SPACE["md"]))
-    body.pack(fill="both", expand=True)
-    return body
+    panel = RoundPanel(win, bg=DARK["bg"], radius=10,
+                       padding=(SPACE["lg"], SPACE["md"]))
+    panel.pack(fill="both", expand=True, padx=SPACE["lg"], pady=(SPACE["lg"], 0))
+    return panel.body
 
 
 def _foot(win: tk.Toplevel) -> ttk.Frame:
@@ -72,6 +73,7 @@ def _modal(win: tk.Toplevel, width: int, height: int | None = None) -> None:
     try:
         win.update_idletasks()
         enable_windows_dark_titlebar(win.winfo_id())
+        enable_windows_rounded_corners(win.winfo_id())
     except Exception:
         pass
     try:
@@ -100,7 +102,7 @@ def ask_string(parent: tk.Misc, title: str, prompt: str,
     body = _card(win)
     ttk.Label(body, text=prompt, style="Card.TLabel").pack(anchor="w")
     var = tk.StringVar(value=initial or "")
-    entry = ttk.Entry(body, textvariable=var)
+    entry = RoundField(body, textvariable=var, width=1, height=32)
     entry.pack(fill="x", pady=(SPACE["sm"], SPACE["xs"]))
     hint = ttk.Label(body, text="", style="MutedCard.TLabel", font=fonts()["caption"])
     hint.pack(anchor="w")
@@ -117,10 +119,12 @@ def ask_string(parent: tk.Misc, title: str, prompt: str,
         return "break"
 
     foot = _foot(win)
-    ttk.Button(foot, text="取消", width=8,
-               command=lambda: _finish(win, None)).pack(side="right")
-    ttk.Button(foot, text="确定", width=8, style="Accent.TButton",
-               command=submit).pack(side="right", padx=(0, SPACE["sm"]))
+    RoundButton(foot, "取消", command=lambda: _finish(win, None), width=64,
+                height=28, radius=8, kind="outline", bg=DARK["bg"],
+                font=ui_font(9)).pack(side="right")
+    RoundButton(foot, "确定", command=submit, width=64, height=28, radius=8,
+                kind="accent", bg=DARK["bg"],
+                font=ui_font(9, "bold")).pack(side="right", padx=(0, SPACE["sm"]))
 
     entry.bind("<Return>", submit)
     win.bind("<Return>", submit)
@@ -144,12 +148,13 @@ def ask_yes_no(parent: tk.Misc, title: str, message: str,
     win._result = False
 
     foot = _foot(win)
-    ttk.Button(foot, text="取消", width=8,
-               command=lambda: _finish(win, False)).pack(side="right")
-    ttk.Button(foot, text=ok_text, width=8,
-               style="Danger.TButton" if destructive else "Accent.TButton",
-               command=lambda: _finish(win, True)).pack(
-        side="right", padx=(0, SPACE["sm"]))
+    RoundButton(foot, "取消", command=lambda: _finish(win, False), width=64,
+                height=28, radius=8, kind="outline", bg=DARK["bg"],
+                font=ui_font(9)).pack(side="right")
+    RoundButton(foot, ok_text, command=lambda: _finish(win, True), width=64,
+                height=28, radius=8,
+                kind="danger" if destructive else "accent", bg=DARK["bg"],
+                font=ui_font(9, "bold")).pack(side="right", padx=(0, SPACE["sm"]))
     win.bind("<Escape>", lambda e: _finish(win, False))
     win.bind("<Return>", lambda e: _finish(win, True))
     _modal(win, 460)
@@ -173,8 +178,9 @@ def show_message(parent: tk.Misc, title: str, message: str,
     _message_label(body, message)
 
     foot = _foot(win)
-    ttk.Button(foot, text="确定", width=8, style="Accent.TButton",
-               command=lambda: _finish(win, True)).pack(side="right")
+    RoundButton(foot, "确定", command=lambda: _finish(win, True), width=64,
+                height=28, radius=8, kind="accent", bg=DARK["bg"],
+                font=ui_font(9, "bold")).pack(side="right")
     win.bind("<Escape>", lambda e: _finish(win, True))
     win.bind("<Return>", lambda e: _finish(win, True))
     _modal(win, 480)
@@ -230,15 +236,17 @@ def build_qr_window(parent: tk.Misc, url: str,
     ttk.Label(body, text="扫码在手机上打开共享目录",
               style="CardTitle.TLabel").pack(anchor="w", pady=(0, SPACE["sm"]))
 
-    frame = tk.Frame(body, bg="#ffffff", bd=0, highlightthickness=0)
-    frame.pack()
-    canvas = tk.Canvas(frame, bg="#ffffff", highlightthickness=0, bd=0,
-                       width=side, height=side)
-    canvas.pack(padx=SPACE["md"], pady=SPACE["md"])
+    qr_surface = RoundSurface(body, fill="#ffffff", radius=8,
+                              bg=DARK["panel"], border=None,
+                              width=side + 8, autoheight=True)
+    qr_surface.pack()
+    canvas = tk.Canvas(qr_surface.body, bg="#ffffff", highlightthickness=0,
+                       bd=0, width=side, height=side)
+    canvas.pack()
     _draw_matrix(canvas, matrix, scale)
     win.qr_canvas = canvas
 
-    link = ttk.Entry(body)
+    link = RoundField(body, width=1, height=32)
     link.insert(0, url)
     link.configure(state="readonly")
     link.pack(fill="x", pady=(SPACE["sm"], SPACE["xs"]))
@@ -267,12 +275,15 @@ def build_qr_window(parent: tk.Misc, url: str,
         show_info(win, "已保存", f"二维码已保存到：\n{path}")
 
     foot = _foot(win)
-    ttk.Button(foot, text="关闭", width=8,
-               command=lambda: _finish(win, None)).pack(side="right")
-    ttk.Button(foot, text="保存 PNG…", style="Ghost.TButton",
-               command=save_png).pack(side="right", padx=(0, SPACE["sm"]))
-    ttk.Button(foot, text="复制链接", style="Ghost.TButton",
-               command=copy_link).pack(side="right", padx=(0, SPACE["sm"]))
+    RoundButton(foot, "关闭", command=lambda: _finish(win, None), width=64,
+                height=28, radius=8, kind="outline", bg=DARK["bg"],
+                font=ui_font(9)).pack(side="right")
+    RoundButton(foot, "保存 PNG…", command=save_png, width=88, height=28,
+                radius=8, kind="outline", bg=DARK["bg"],
+                font=ui_font(9)).pack(side="right", padx=(0, SPACE["sm"]))
+    RoundButton(foot, "复制链接", command=copy_link, width=80, height=28,
+                radius=8, kind="outline", bg=DARK["bg"],
+                font=ui_font(9)).pack(side="right", padx=(0, SPACE["sm"]))
     win.bind("<Escape>", lambda e: _finish(win, None))
     win._qr_size = (width, side + 220)
     return win

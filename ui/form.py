@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 
-from core.config import DEFAULT_WINDOW_TITLE, ServerConfig
+from core.config import ServerConfig
 
 
 class FormStateMixin:
@@ -42,10 +42,10 @@ class FormStateMixin:
         self.v_profile = tk.StringVar(value="")
         self.v_status = tk.StringVar(value="未启动")
         self.v_url = tk.StringVar(value="—")
-        #: 标题显示值（窗口标题 + 顶部标题共用）；空配置时回落 DEFAULT_WINDOW_TITLE
-        self.v_app_title = tk.StringVar(value=DEFAULT_WINDOW_TITLE)
-        #: 高级设置里编辑的原始标题（空串 = 使用默认标题）
-        self.v_window_title = tk.StringVar(value="")
+        #: 浏览器标签页标题（空 = dufs 官方标题）
+        self.v_web_title = tk.StringVar(value="")
+        #: 自定义 favicon.ico 路径（空 = 官方图标）
+        self.v_favicon_path = tk.StringVar(value="")
 
         for v in (self.v_path, self.v_port, self.v_prefix, self.v_hidden,
                   self.v_render, self.v_logpath, self.v_cert, self.v_key, self.v_profile,
@@ -90,6 +90,8 @@ class FormStateMixin:
             enable_cors=self.v_cors.get(),
             custom_ui=self.v_custom_ui.get(),
             assets_dir=self.v_assets_dir.get(),
+            web_title=self.v_web_title.get(),
+            favicon_path=self.v_favicon_path.get().strip(),
             hidden=self.v_hidden.get().strip(),
             render_mode=self.v_render.get(),
             save_log=self.v_savelog.get(),
@@ -116,6 +118,8 @@ class FormStateMixin:
         self.v_cors.set(cfg.enable_cors)
         self.v_custom_ui.set(cfg.custom_ui)
         self.v_assets_dir.set(cfg.assets_dir)
+        self.v_web_title.set(cfg.web_title)
+        self.v_favicon_path.set(cfg.favicon_path)
         self.v_hidden.set(cfg.hidden)
         self.v_render.set(cfg.render_mode)
         self.v_savelog.set(cfg.save_log)
