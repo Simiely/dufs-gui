@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from dataclasses import dataclass, field
@@ -198,6 +199,41 @@ def patch_index_css(css: str) -> tuple[str, str]:
     return css + _TOP_BAR_OVERRIDE, "顶部渐变彩条已移除"
 
 
+#: dufs 对 /__dufs_v<ver>__/index.css|index.js 返回
+#: ``Cache-Control: public, max-age=31536000, immutable``，而路径不随皮肤内容变化。
+#: 浏览器会沿用旧脚本/样式，导致"服务端已汉化、页面仍是英文"。
+#: 在 index.html 的资源引用后加内容哈希，URL 变了才会重新拉取。
+_ASSET_LINKS = ("__ASSETS_PREFIX__index.css", "__ASSETS_PREFIX__index.js")
+
+
+def asset_token(dest_dir: str | Path) -> str:
+    """按 index.js + index.css 内容生成短版本号。"""
+    h = hashlib.sha256()
+    for name in ("index.js", "index.css"):
+        p = Path(dest_dir) / name
+        if p.is_file():
+            h.update(p.read_bytes())
+    return h.hexdigest()[:10]
+
+
+def bust_asset_cache(html: str, token: str) -> tuple[str, str]:
+    """给样式/脚本引用追加 ``?v=<token>``，绕开 immutable 缓存。
+
+    幂等：已有 ``?v=`` 时先去掉旧值再加新值。
+    """
+    if not token:
+        return html, "缓存版本未生成"
+    changed = 0
+    for link in _ASSET_LINKS:
+        if link not in html:
+            continue
+        html = html.replace(link + "?v=" + token, link)
+        html = html.replace(link, f"{link}?v={token}")
+        changed += 1
+    return html, (f"网页资源缓存版本已更新：v={token}" if changed
+                  else "未找到样式/脚本引用，跳过缓存版本")
+
+
 def favicon_bytes(path: str) -> tuple[bytes | None, str]:
     """读取并校验 .ico 文件，返回 (内容, 说明)。"""
     p = Path(path)
@@ -306,6 +342,19 @@ def prepare_overlay(source_dir: str, title: str, favicon_path: str,
                     notes.append(f"写入 index.css 失败：{e}")
     else:
         notes.append("皮肤缺少 index.css，跳过顶部彩条处理")
+
+    # ---- index.html：样式/脚本引用追加内容版本，绕开 immutable 缓存 ----
+    # 必须放在 CSS/JS 改写之后：token 由最终内容算出。
+    try:
+        html_now = html_path.read_text(encoding="utf-8")
+        token = asset_token(dest)
+        busted, msg = bust_asset_cache(html_now, token)
+        notes.append(msg)
+        if busted != html_now:
+            html_path.write_text(busted, encoding="utf-8")
+            applied = True
+    except OSError as e:
+        notes.append(f"写入缓存版本失败：{e}")
 
     if favicon_path:
         data, msg = favicon_bytes(favicon_path)

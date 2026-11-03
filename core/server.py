@@ -352,6 +352,10 @@ class DufsProcess:
         try:
             for line in iter(stream.readline, ""):
                 line = line.rstrip()
+                # 健康检查每 2 秒一次，dufs 会为每个 HEAD 请求写一行 INFO；
+                # 状态变化已由健康监控单独上报，日志区不再重复刷屏。
+                if "/__dufs__/health" in line:
+                    continue
                 self.recent.append(line)
                 self.log_queue.put(("log", self.prefix + line))
         except (ValueError, OSError):

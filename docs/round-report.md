@@ -374,3 +374,22 @@ Win10 直角接受。证据：`spike-legacy-rgn.png` / `spike-legacy-rgn-zoom.pn
   SHA256 `50d1921cc2b7b17622df821f0df5b0bfd00573268677395d4b9e4cbb8fd1e71c`；
   截图 `screenshots/round8-*`（主窗单/多 IP、弹窗 4/20/21 行、过滤、空态、二维码）。
 
+## 14. 批次 9：共享页汉化生效、顶线消失、日志去噪（v1.6.2）
+
+- **排查结论**：服务端返回的覆盖资产本来就是汉化版且带 CSS 覆盖；问题在浏览器缓存。
+  `GET /__dufs_v0.47.0__/index.js` 响应头为
+  `Cache-Control: public, max-age=31536000, immutable`，URL 不随皮肤内容变化，
+  浏览器持续使用旧脚本/样式（表头英文 + 顶线仍在）。
+- **修复**：`core/webtweak.py` 生成覆盖副本时，用最终 `index.js + index.css` 的 SHA256
+  前 10 位作版本，改写 `index.html` 的资源引用为 `...index.css?v=<token>` / `...index.js?v=<token>`。
+  HTTP 实测页面与两个资源 URL 均带 `?v=f8142ddadb`，JS 含「名称/修改时间/大小/操作」，
+  CSS 末尾含 `DufsGui 运行时覆盖` 与 `display:none !important`。
+- **顶线**：`body::before` 覆盖规则位于 CSS 末尾且带 `!important`，缓存绕过后生效。
+  无头 Edge 同一配置目录先加载旧版再加载覆盖版，截图对比确认渐变线消失。
+- **日志**：`core/server.py` 的 `_pump` 过滤含 `/__dufs__/health` 的行；健康检查每 2 秒
+  一次 HEAD，dufs 每次写一行 INFO，原实现原样转发导致持续刷新。状态变化仍由 `_on_health`
+  单独记录，日志只在状态改变时新增。
+- 回归：207 tests OK（skipped=1）；截图 `screenshots/round9-webui-before.png` /
+  `round9-webui-after.png`；产物 `dist\DufsGui-v1.6.2.exe`，15,729,124 B，
+  SHA256 `39dd518cb2792ab04c04c8c182d1b9c2fdbdfb62ff4e3528423a99b1ba31957b`。
+

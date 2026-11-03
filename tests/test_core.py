@@ -348,6 +348,9 @@ class ConfigTest(unittest.TestCase):
             self.assertIn('lang="zh-CN"', html)
             self.assertIn('<th class="cell-name" colspan="2">上传任务</th>', html)
             self.assertNotIn('title="Delete"', html)
+            # dufs 对资源返回 immutable 缓存，引用必须带内容版本才会重新拉取
+            self.assertRegex(html, r"__ASSETS_PREFIX__index\.css\?v=[0-9a-f]{10}")
+            self.assertRegex(html, r"__ASSETS_PREFIX__index\.js\?v=[0-9a-f]{10}")
             self.assertIn("DufsGui 运行时覆盖", css)
             self.assertIn("display: none !important;", css)
             source_js = (root / "assets" / "index.js").read_text(encoding="utf-8")
@@ -1050,6 +1053,27 @@ class WaitReadyTest(unittest.TestCase):
         proc.recent.append("line2")
         self.assertIn("line2", proc.recent_output())
         self.assertIn("line1", proc.recent_output())
+
+    def test_health_probe_lines_not_forwarded(self):
+        """健康检查每 2 秒一次，dufs 会打一行 INFO；不能刷进日志区。"""
+        import io
+
+        q = queue.Queue()
+        proc = server.DufsProcess(q, prefix="[x] ", tag="127.0.0.1")
+        proc._pump(io.StringIO(
+            'INFO - 127.0.0.1 "HEAD /__dufs__/health" 200\n'
+            'INFO - 127.0.0.1 "GET /" 200\n'))
+        logs = []
+        while True:
+            try:
+                kind, payload = q.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "log":
+                logs.append(payload)
+        self.assertTrue(any('GET /' in line for line in logs))
+        self.assertFalse(any("health" in line for line in logs))
+        self.assertFalse(any("health" in line for line in proc.recent))
 
 
 class ChildEnvTest(unittest.TestCase):

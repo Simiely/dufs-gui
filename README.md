@@ -18,7 +18,7 @@
 
 ## 快速开始
 
-**已有构建产物**：双击 `dist\DufsGui-v1.6.1.exe` 即可（onefile 首启自解压约 1–3 秒）。
+**已有构建产物**：双击 `dist\DufsGui-v1.6.2.exe` 即可（onefile 首启自解压约 1–3 秒）。
 
 **从源码构建**：双击 `build.bat`，它自动完成「取 dufs → 打包 → `--selftest` → 生成校验和」。
 只有缺 PyInstaller 时会停下并打印一行可复制的安装命令
@@ -59,8 +59,8 @@
 
 ## 版本
 
-当前 **v1.6.1**。版本号唯一定义在 [`core/__init__.py`](core/__init__.py)，
-打包产物名（`dist\DufsGui-v1.6.1.exe`）与构建信息从它派生；GUI 窗口标题固定
+当前 **v1.6.2**。版本号唯一定义在 [`core/__init__.py`](core/__init__.py)，
+打包产物名（`dist\DufsGui-v1.6.2.exe`）与构建信息从它派生；GUI 窗口标题固定
 「Dufs GUI」，浏览器标签页标题在高级设置「网页外观」里配置。
 
 ## 构建可复现与产物校验
@@ -73,7 +73,7 @@
 - 同时生成 `dist\SHA256SUMS`（sha256sum 格式）：exe + 关键构建输入
   （`bin\dufs.exe`、`assets\`、`licenses\`、`requirements.txt`、spec、两份校验和清单）。
   除 exe 外的条目是**打进包内的输入**，用于审计来源，不单独分发。
-- 校验：`Get-FileHash dist\DufsGui-v1.6.1.exe -Algorithm SHA256`，
+- 校验：`Get-FileHash dist\DufsGui-v1.6.2.exe -Algorithm SHA256`，
   或在仓库根目录执行 `sha256sum -c dist/SHA256SUMS`。
 
 ## 测试
