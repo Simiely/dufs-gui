@@ -89,6 +89,8 @@ class DufsGui(tk.Tk):
         self.v_logpath = tk.StringVar(value="")
         self.v_cert = tk.StringVar(value="")
         self.v_key = tk.StringVar(value="")
+        self.v_auth_user = tk.StringVar(value="")
+        self.v_auth_pass = tk.StringVar(value="")
         self.v_dufs = tk.StringVar(value="")
         self.v_profile = tk.StringVar(value="")
         self.v_status = tk.StringVar(value="未启动")
@@ -96,7 +98,7 @@ class DufsGui(tk.Tk):
 
         for v in (self.v_path, self.v_bind, self.v_port, self.v_prefix, self.v_hidden,
                   self.v_render, self.v_logpath, self.v_cert, self.v_key, self.v_profile,
-                  self.v_custom_ui, self.v_assets_dir):
+                  self.v_custom_ui, self.v_assets_dir, self.v_auth_user, self.v_auth_pass):
             v.trace_add("write", lambda *_: self._refresh_preview())
 
     def port_from_form(self) -> tuple[int | None, str]:
@@ -134,6 +136,8 @@ class DufsGui(tk.Tk):
             log_path=self.v_logpath.get().strip(),
             tls_cert=self.v_cert.get().strip(),
             tls_key=self.v_key.get().strip(),
+            auth_user=self.v_auth_user.get().strip(),
+            auth_pass=self.v_auth_pass.get(),
         )
 
     def load_to_form(self, cfg: ServerConfig) -> None:
@@ -155,6 +159,8 @@ class DufsGui(tk.Tk):
         self.v_logpath.set(cfg.log_path)
         self.v_cert.set(cfg.tls_cert)
         self.v_key.set(cfg.tls_key)
+        self.v_auth_user.set(cfg.auth_user)
+        self.v_auth_pass.set(cfg.auth_pass)
 
     # ---------------- 界面 ----------------
     def _build_ui(self) -> None:
@@ -279,7 +285,7 @@ class DufsGui(tk.Tk):
         holder.columnconfigure(1, weight=1)
         self.btn_adv = ttk.Button(holder, text="高级设置…", command=self._open_advanced)
         self.btn_adv.grid(row=0, column=0, sticky="w")
-        ttk.Label(holder, text="隐藏规则 / 渲染模式 / 日志 / HTTPS / dufs 程序",
+        ttk.Label(holder, text="隐藏规则 / 渲染模式 / 日志 / HTTPS / 访问口令 / dufs 程序",
                   style="Muted.TLabel").grid(row=0, column=1, sticky="w", padx=12)
 
     def _open_advanced(self) -> None:
@@ -380,26 +386,39 @@ class DufsGui(tk.Tk):
         ttk.Button(outer, text="选择…", width=8, command=self._pick_key).grid(
             row=6, column=2, padx=(6, 0), pady=(4, 0))
 
+        # 访问口令（dufs -a user:pass@/:rw）
+        row_label("访问口令（用户名）", 7)
+        e_auth_user = ttk.Entry(outer, textvariable=self.v_auth_user)
+        e_auth_user.grid(row=7, column=1, sticky="ew", padx=8, pady=(10, 0))
+        row_label("密码", 8)
+        self.ent_auth_pass = ttk.Entry(outer, textvariable=self.v_auth_pass,
+                                       show="*")
+        self.ent_auth_pass.grid(row=8, column=1, sticky="ew", padx=8, pady=(4, 0))
+        ttk.Label(outer,
+                  text="留空表示不鉴权；非回环监听必须设置口令；口令明文保存在配置文件中",
+                  style="Muted.TLabel").grid(row=9, column=1, columnspan=2,
+                                             sticky="w", padx=8, pady=(2, 0))
+
         # 网页皮肤目录
-        row_label("网页皮肤目录", 7)
+        row_label("网页皮肤目录", 10)
         ttk.Entry(outer, textvariable=self.v_assets_dir).grid(
-            row=7, column=1, sticky="ew", padx=8, pady=(10, 0))
+            row=10, column=1, sticky="ew", padx=8, pady=(10, 0))
         ttk.Button(outer, text="选择…", width=8, command=self._pick_assets).grid(
-            row=7, column=2, padx=(6, 0), pady=(10, 0))
+            row=10, column=2, padx=(6, 0), pady=(10, 0))
         ttk.Label(outer, text="留空用内置皮肤；也可指向第三方皮肤包（须含 index.html）",
-                  style="Muted.TLabel").grid(row=8, column=1, columnspan=2,
+                  style="Muted.TLabel").grid(row=11, column=1, columnspan=2,
                                              sticky="w", padx=8, pady=(2, 0))
 
         # dufs 程序
-        row_label("dufs 程序", 9)
+        row_label("dufs 程序", 12)
         e5 = ttk.Entry(outer, textvariable=self.v_dufs, state="readonly")
-        e5.grid(row=9, column=1, sticky="ew", padx=8, pady=(10, 0))
+        e5.grid(row=12, column=1, sticky="ew", padx=8, pady=(10, 0))
         ttk.Button(outer, text="更换…", width=8, command=self._pick_dufs).grid(
-            row=9, column=2, padx=(6, 0), pady=(10, 0))
+            row=12, column=2, padx=(6, 0), pady=(10, 0))
 
         # 底部提示 + 关闭
         hint = ttk.Frame(outer)
-        hint.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(18, 0))
+        hint.grid(row=13, column=0, columnspan=3, sticky="ew", pady=(18, 0))
         hint.columnconfigure(0, weight=1)
         self.lbl_adv_hint = ttk.Label(hint, text="", style="Muted.TLabel",
                                       font=ui_font(9))
@@ -751,6 +770,11 @@ class DufsGui(tk.Tk):
             messagebox.showerror("配置有误", "\n".join(errs))
             return
 
+        if cfg.auth_pass:
+            self._log(f"访问口令：已启用（用户名 {cfg.auth_user.strip()}）")
+        else:
+            self._log("访问口令：未启用（仅允许回环监听）")
+
         binary = dufsbin.ensure_dufs()
         if binary is None:
             if messagebox.askyesno("缺少 dufs",
@@ -824,8 +848,9 @@ class DufsGui(tk.Tk):
                     _m2 = re.search(r"(\d+\.\d+\.\d+)", _vfn(self.dufs_path) or "")
                     _dv = _m2.group(1) if _m2 else ""
                 if _skin_v and _dv and _skin_v != _dv:
-                    self._log(f"提示：网页皮肤版本 {_skin_v} 与 dufs {_dv} 不一致，"
-                              f"可执行 python tools/fetch_skin.py {_dv} 重新生成")
+                    self._log(f"提示：网页皮肤版本 {_skin_v} 与 dufs {_dv} 不一致；"
+                              "升级皮肤需先更新 tools/skin_checksums.json，"
+                              "再执行 python tools/fetch_skin.py")
         except Exception:  # noqa: BLE001
             pass
 
@@ -917,6 +942,7 @@ class DufsGui(tk.Tk):
         """启动后台健康探测；URL 在服务运行期间固定。"""
         self._stop_health()
         url = cfg.health_url()
+        # dufs 0.47 的 /__dufs__/health 不校验访问口令，探测不发送任何凭据
         self.health = HealthMonitor(
             lambda: url,
             lambda kind, detail: self.log_queue.put((kind, detail)))

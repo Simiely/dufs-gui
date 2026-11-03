@@ -199,6 +199,86 @@ class ConfigTest(unittest.TestCase):
             self.assertEqual(back.profiles["x"]["port"], 1)
 
 
+class AuthConfigTest(unittest.TestCase):
+    """P0-2 访问口令：参数生成、脱敏、非回环默认拒绝。"""
+
+    def test_args_include_auth_and_command_line_redacts(self):
+        cfg = ServerConfig(share_path="/tmp", auth_user="alice",
+                           auth_pass="s3cret:with:colon")
+        args = cfg.to_args()
+        i = args.index("-a")
+        # dufs 0.47 要求 user:pass@/path；裸 user:pass 会被拒绝启动
+        self.assertEqual(args[i + 1], "alice:s3cret:with:colon@/:rw")
+        line = cfg.command_line()
+        self.assertIn("-a", line)
+        self.assertIn("alice:***@/:rw", line)
+        self.assertNotIn("s3cret", line, "命令预览不得泄露口令")
+
+    def test_validate_rejects_at_slash_in_credentials(self):
+        """口令里出现 "@/"" 会破坏 dufs 的 user:pass@/path 解析，必须拒绝。"""
+        for user, pwd in (("alice@/x", "pw"), ("alice", "pw@/x")):
+            cfg = ServerConfig(share_path="/tmp", auth_user=user, auth_pass=pwd)
+            self.assertTrue(any("@/" in e for e in cfg.validate()), (user, pwd))
+
+    def test_auth_roundtrip(self):
+        cfg = ServerConfig(share_path="/tmp", auth_user="alice", auth_pass="pw")
+        back = ServerConfig.from_dict(cfg.to_dict())
+        self.assertEqual(back.to_args(), cfg.to_args())
+        self.assertNotIn("pw", back.command_line())
+
+    def test_validate_requires_both_parts(self):
+        errs = ServerConfig(share_path="/tmp", auth_user="alice").validate()
+        self.assertTrue(any("同时" in e for e in errs), errs)
+        errs = ServerConfig(share_path="/tmp", auth_pass="pw").validate()
+        self.assertTrue(any("同时" in e for e in errs), errs)
+
+    def test_validate_rejects_colon_in_username(self):
+        errs = ServerConfig(share_path="/tmp", auth_user="a:b",
+                            auth_pass="pw").validate()
+        self.assertTrue(any("冒号" in e for e in errs), errs)
+
+    def test_validate_rejects_newline_in_credentials(self):
+        cases = (("auth_user", "ali\nce", "pw"),
+                 ("auth_pass", "alice", "p\nw"))
+        for field, user, pwd in cases:
+            cfg = ServerConfig(share_path="/tmp", auth_user=user, auth_pass=pwd)
+            self.assertTrue(any("换行" in e for e in cfg.validate()), field)
+
+    def test_non_loopback_without_auth_is_denied(self):
+        cfg = ServerConfig(share_path="/tmp", bind="0.0.0.0")
+        errs = cfg.validate()
+        self.assertTrue(any("回环" in e and "口令" in e for e in errs), errs)
+        # 拒绝必须发生在启动前，而不是只弹一个可忽略的警告
+        self.assertTrue(errs)
+
+    def test_non_loopback_with_auth_is_allowed(self):
+        cfg = ServerConfig(share_path="/tmp", bind="0.0.0.0",
+                           auth_user="alice", auth_pass="pw")
+        self.assertFalse(any("回环" in e for e in cfg.validate()))
+
+    def test_loopback_aliases_allow_no_auth(self):
+        for bind in ("127.0.0.1", "localhost", "::1", "[::1]", "127.0.0.2"):
+            with self.subTest(bind=bind):
+                cfg = ServerConfig(share_path="/tmp", bind=bind)
+                self.assertFalse(any("回环" in e for e in cfg.validate()), bind)
+
+    def test_unknown_hostname_is_treated_as_non_loopback(self):
+        cfg = ServerConfig(share_path="/tmp", bind="intranet-host")
+        self.assertTrue(any("回环" in e for e in cfg.validate()))
+
+    def test_empty_bind_is_rejected(self):
+        errs = ServerConfig(share_path="/tmp", bind="").validate()
+        self.assertTrue(any("不能为空" in e for e in errs), errs)
+
+    def test_redaction_survives_share_path_named_dash_a(self):
+        """共享目录名恰好是 "-a" 时，也不能漏掉真正的口令。"""
+        cfg = ServerConfig(share_path="-a", bind="127.0.0.1",
+                           auth_user="alice", auth_pass="topsecret")
+        line = cfg.command_line()
+        self.assertNotIn("topsecret", line)
+        self.assertIn("alice:***", line)
+
+
 class PortTest(unittest.TestCase):
     def test_in_use_and_free(self):
         srv = socket.socket()

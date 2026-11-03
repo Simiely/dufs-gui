@@ -32,16 +32,26 @@ core/
   app_state.py     全局深色状态（避免模块循环依赖）
 assets/            dufs 官方 v0.47.0 网页皮肤 + CSS 覆盖层
 tools/             fetch_dufs.py（下载 dufs）、fetch_skin.py（同步官方皮肤）、
+                   _integrity.py（固定版本 + 逐源 SHA256）、
+                   *_checksums.json（官方 digest / TOFU 清单）、
                    embed_dufs.py（可选 base64 内嵌）
-tests/             74 项单测（1 项 jsdom 皮肤 E2E 自动跳过）；
+tests/             117 项单测（1 项 jsdom 皮肤 E2E 自动跳过）；
                    tk_stub.py 提供无 tkinter 环境下的桩
 ```
 
 测试与 CI：
 
-- 本地：`python -m unittest discover -s tests`，74 项，1 项 jsdom E2E 自动跳过
+- 本地：`python -m unittest discover -s tests`，117 项，1 项 jsdom E2E 自动跳过
 - Windows CI：`.github/workflows/windows-ci.yml`，`windows-latest`，
   矩阵 Python 3.9 / 3.12，只跑标准库 unittest
+
+关键安全默认（P0）：
+
+- `ServerConfig.validate()` 拒绝"非回环监听 + 无访问口令"，同时校验 `-a` 参数合法性；
+  `command_line()` 只输出脱敏口令，日志与 URL 不含密码。
+- Windows 子进程加入 Job Object（`KILL_ON_JOB_CLOSE`）；POSIX 用 atexit/SIGTERM 兜底。
+- 下载脚本固定 `pinned_version`，每个来源单独比对 SHA256；哈希不符立即失败，
+  只有网络失败才换源。TOFU 仅用于清单缺失时，不能当作上游签名。
 
 三条关键链路：
 

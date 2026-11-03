@@ -233,6 +233,32 @@ class UiSmokeTest(unittest.TestCase):
         self.assertNotIn("--assets", self.gui.current_config().to_args())
         self.gui.v_custom_ui.set(True)
 
+    def test_auth_config_and_preview_redaction(self):
+        """高级设置里的口令应进入 -a 参数，但预览不得显示明文。"""
+        try:
+            self.gui.v_auth_user.set("alice")
+            self.gui.v_auth_pass.set("s3cret")
+            cfg = self.gui.current_config()
+            args = cfg.to_args()
+            self.assertIn("-a", args)
+            # dufs 0.47 的 -a 必须带路径规则（user:pass@/path[:perm]）
+            self.assertEqual(args[args.index("-a") + 1], "alice:s3cret@/:rw")
+            self.gui._refresh_preview()
+            self.assertNotIn("s3cret", self.gui.lbl_cmd["text"])
+            self.assertIn("alice:***", self.gui.lbl_cmd["text"])
+        finally:
+            self.gui.v_auth_user.set("")
+            self.gui.v_auth_pass.set("")
+            self.gui._refresh_preview()
+
+    def test_advanced_popup_password_masked(self):
+        self.gui.adv_win = None
+        self.gui._open_advanced()
+        try:
+            self.assertEqual(self.gui.ent_auth_pass.cget("show"), "*")
+        finally:
+            self.gui.adv_win = None
+
     def test_command_preview(self):
         self.gui._refresh_preview()
         self.assertIn("等效命令", self.gui.lbl_cmd["text"])

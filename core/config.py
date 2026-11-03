@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import sys
@@ -17,6 +18,26 @@ RENDER_MODES = {
     "优先 index.html，否则列表": "--render-try-index",
     "单页应用 SPA": "--render-spa",
 }
+
+
+def is_loopback_bind(bind: str) -> bool:
+    """监听地址是否只对本机开放。
+
+    空值不是合法监听地址（dufs 默认是 0.0.0.0，这里不能当成安全默认）；
+    无法解析的主机名也按"非回环"处理：宁可多要求一次口令，
+    也不要把未知地址当成安全地址。
+    """
+    host = (bind or "").strip().lower()
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -44,6 +65,10 @@ class ServerConfig:
     log_path: str = ""
     tls_cert: str = ""
     tls_key: str = ""
+    #: 访问口令（dufs 的 -a user:pass）。留空表示不鉴权，此时只允许回环监听。
+    #: 注意：明文保存在配置文件中，界面与日志只展示脱敏后的内容。
+    auth_user: str = ""
+    auth_pass: str = ""
 
     # ---------- 命令行 ----------
     def to_args(self) -> list[str]:
@@ -90,13 +115,34 @@ class ServerConfig:
             args += ["--tls-cert", self.tls_cert.strip(),
                      "--tls-key", self.tls_key.strip()]
 
+        user = self.auth_user.strip()
+        if user and self.auth_pass:
+            # dufs 0.47 的 -a 必须带路径规则（user:pass@/path[:perm]）；
+            # 只写 user:pass 会被拒绝启动（实测：Invalid auth `user:pass`）。
+            # rw 表示"登录后仍可写"，是否真的允许上传/删除仍由 --allow-* 控制。
+            args += ["-a", f"{user}:{self.auth_pass}@/:rw"]
+
+        return args
+
+    def redacted_args(self) -> list[str]:
+        """返回脱敏后的参数，供界面预览 / 日志使用（口令替换为 ***）。
+
+        不能简单用 args.index("-a")：共享目录名也可能叫 "-a"，按位置替换会
+        漏掉真正的口令。这里只替换"看起来像 user:pass"的 -a 参数值。
+        """
+        args = self.to_args()
+        for i in range(len(args) - 1):
+            if args[i] == "-a" and ":" in args[i + 1]:
+                head, sep, tail = args[i + 1].partition("@")
+                user = head.split(":", 1)[0]
+                args[i + 1] = f"{user}:***" + (sep + tail if sep else "")
         return args
 
     def command_line(self, binary: str = "dufs") -> str:
-        """生成可直接复制到终端的等价命令（便于学习与排错）。"""
+        """生成可直接复制到终端的等价命令（便于学习与排错，口令已脱敏）。"""
         def q(v: str) -> str:
             return f'"{v}"' if (" " in v or v == "") else v
-        return " ".join([q(binary)] + [q(a) for a in self.to_args()])
+        return " ".join([q(binary)] + [q(a) for a in self.redacted_args()])
 
     # ---------- 展示 ----------
     @property
@@ -158,6 +204,25 @@ class ServerConfig:
                 errs.append(f"{name}文件不存在：{val}")
         if self.save_log and not self.log_path.strip():
             errs.append("勾选保存日志后需要指定日志文件路径")
+        user = self.auth_user.strip()
+        pwd = self.auth_pass
+        if bool(user) != bool(pwd):
+            errs.append("访问口令的用户名和密码必须同时填写（留空表示不鉴权）")
+        if ":" in user:
+            errs.append("访问口令的用户名不能包含冒号（dufs 按 user:pass 解析）")
+        for label, val in (("用户名", user), ("密码", pwd)):
+            if any(ch in val for ch in ("\r", "\n", "\x00")):
+                errs.append(f"访问口令的{label}不能包含换行或空字符")
+            if "@/" in val:
+                errs.append(f"访问口令的{label}不能包含 \"@/\""
+                            "（dufs 按 user:pass@/path 解析）")
+        # 安全默认：非回环监听且没有口令时拒绝启动（而不是只弹一个可忽略的提示）。
+        # 理由：LAN 共享是高频场景，用户很容易在"确认一次"后忘记自己已经对外暴露。
+        if not self.bind.strip():
+            errs.append("监听地址不能为空（仅本机使用请填 127.0.0.1）")
+        elif not (user and pwd) and not is_loopback_bind(self.bind):
+            errs.append(f"监听地址 {self.bind.strip() or '(空)'} 不是回环地址，"
+                        "必须设置访问口令后才能启动")
         if self.custom_ui and self.assets_dir.strip():
             from .dufsbin import validate_assets_dir
 

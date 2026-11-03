@@ -13,27 +13,37 @@
 改为：完整搬运官方 assets，只重写 CSS 变量。
 这样所有交互逻辑都是官方 JS，功能正确性由官方保证，我们只负责配色。
 
+版本固定在校验和清单里（tools/skin_checksums.json），不再"探测本机已安装的
+dufs 版本"：GUI 自带的 dufs 与皮肤必须同版本，否则 HTML / JS 契约可能不一致。
+每个下载源都要通过 SHA256 比对；哈希不符立即失败且不会静默换源。
+
 用法：
-    python tools/fetch_skin.py            # 使用当前 dufs 版本
-    python tools/fetch_skin.py 0.47.0     # 指定版本
+    python tools/fetch_skin.py            # 使用清单中固定的版本
+    python tools/fetch_skin.py 0.47.0     # 显式指定；必须与清单一致
 """
 
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _integrity  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
+CHECKSUMS = Path(__file__).resolve().parent / "skin_checksums.json"
 FILES = ("index.html", "index.css", "index.js", "favicon.ico")
 
-# jsDelivr 是 GitHub 的公共 CDN，比 raw.githubusercontent 更容易访问
+# 源的名字必须与校验和清单里的 sources 键严格对应。
+# jsDelivr 是 GitHub 的公共 CDN，比 raw.githubusercontent 更容易访问。
 MIRRORS = [
-    "https://cdn.jsdelivr.net/gh/sigoden/dufs@{tag}/assets/{name}",
-    "https://raw.githubusercontent.com/sigoden/dufs/{tag}/assets/{name}",
+    ("jsdelivr", "https://cdn.jsdelivr.net/gh/sigoden/dufs@{tag}/assets/{name}"),
+    ("raw.githubusercontent.com",
+     "https://raw.githubusercontent.com/sigoden/dufs/{tag}/assets/{name}"),
 ]
 
 DARK_OVERRIDE = """
@@ -48,7 +58,8 @@ DARK_OVERRIDE = """
    这里在末尾无条件重写同样的变量，使网页恒为深色（与桌面端默认深色一致），
    不再依赖访问者的系统偏好。
 
-   升级 dufs 时请同步执行：python tools/fetch_skin.py <版本号>
+   升级 dufs 时请先更新 tools/skin_checksums.json，再执行
+   python tools/fetch_skin.py（显式版本必须与清单一致）
    ========================================================================== */
 
 :root {
@@ -293,59 +304,94 @@ def http_get(url: str, timeout: int = 40) -> bytes:
         return r.read()
 
 
-def fetch(tag: str, name: str) -> bytes:
+def normalize_tag(version: str) -> str:
+    v = (version or "").strip()
+    return v if v.startswith("v") else "v" + v
+
+
+def fetch(tag: str, name: str, doc: dict, checksums: Path | None = None) -> bytes:
+    """按源下载并校验单个官方 assets 文件。
+
+    网络失败可以换下一个源（逐条打印原因）；SHA256 不符属于硬失败，
+    立即抛出 IntegrityError，不尝试其他镜像（避免静默换源）。
+    """
+    checksums = checksums or CHECKSUMS
     errs = []
-    for tpl in MIRRORS:
+    for source, tpl in MIRRORS:
         url = tpl.format(tag=tag, name=name)
         try:
             data = http_get(url)
-            if data[:200].lstrip().startswith(b"<html"):
-                raise ValueError("返回的不是原始文件（可能是 HTML 页面）")
-            print(f"  [ok] {name} <- {url}")
-            return data
         except Exception as e:  # noqa: BLE001
-            errs.append(f"{url}: {e}")
+            msg = f"[{source}] {url}: {e}"
+            print(f"  [{source}] 下载失败：{type(e).__name__}: {e}")
+            errs.append(msg)
+            continue
+
+        if data[:200].lstrip().startswith(b"<"):
+            # 404 / 代理错误页通常以 <html 或 <!doctype 开头；不能把这种内容
+            # 当成皮肤文件，否则 TOFU 会把错误页的哈希记进清单
+            msg = f"[{source}] 返回的不是原始文件（可能是 HTML 错误页）"
+            print("  " + msg)
+            errs.append(msg)
+            continue
+
+        expected = _integrity.source_sha256(doc, name, source)
+        # 哈希不符直接抛 IntegrityError，不进入下一个镜像
+        digest = _integrity.verify(data, expected, name, source)
+
+        if not expected:
+            # 首次信任（TOFU）：记录哈希后再写入仓库
+            _integrity.record(doc, name, source, digest)
+            try:
+                _integrity.save(checksums, doc)
+            except OSError as e:
+                raise RuntimeError(
+                    f"已下载 {name} 但无法写回校验和文件：{checksums}（{e}）") from e
+            print(f"  [!] TOFU：已记录 {name} / {source} 的 SHA256 {digest}\n"
+                  "      该策略只能发现后续下载被替换，不能证明本次下载未被投毒。")
+
+        print(f"  [ok] {name} <- {url}")
+        return data
     raise RuntimeError(f"下载 {name} 失败：\n  " + "\n  ".join(errs))
-
-
-def detect_version() -> str:
-    """从已安装的 dufs 读版本号，用于对齐 assets 版本。"""
-    from core import dufsbin  # noqa: PLC0415
-
-    found = dufsbin.find_dufs()
-    if not found:
-        return ""
-    v = dufsbin.version(found) or ""
-    m = re.search(r"(\d+\.\d+\.\d+)", v)
-    return m.group(1) if m else ""
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("version", nargs="?", default="",
-                    help="dufs 版本号，如 0.47.0；省略则自动探测已安装的 dufs")
+                    help="dufs 版本号，如 0.47.0；省略则使用校验和清单里的固定版本")
     args = ap.parse_args()
 
-    sys.path.insert(0, str(ROOT))
-    tag = args.version or detect_version()
-    if not tag:
-        print("[X] 未指定版本，也未能从已安装的 dufs 探测到版本")
+    try:
+        doc = _integrity.load(CHECKSUMS)
+    except _integrity.IntegrityError as e:
+        print(f"[X] {e}")
         return 1
-    tag = tag if tag.startswith("v") else "v" + tag
+
+    pinned = normalize_tag(str(doc.get("pinned_version") or ""))
+    if not pinned:
+        print(f"[X] 校验和清单缺少 pinned_version：{CHECKSUMS}")
+        return 1
+    tag = normalize_tag(args.version) if args.version else pinned
+    if tag != pinned:
+        print(f"[X] 校验和清单只覆盖 {pinned}，拒绝使用 {tag}。\n"
+              "    升级 dufs 请先更新 tools/skin_checksums.json（含官方 SHA256）。")
+        return 1
     print(f"[1/3] 目标版本：{tag}")
 
     ASSETS.mkdir(parents=True, exist_ok=True)
     print("[2/3] 下载官方 assets")
-    for name in FILES:
-        data = fetch(tag, name)
-        if name == "index.css":
-            (ASSETS / name).write_bytes(
-                data.decode("utf-8").encode("utf-8"))
-            (ASSETS / name).write_text(
-                data.decode("utf-8") + DARK_OVERRIDE + VISUAL_OVERRIDE,
-                encoding="utf-8")
-        else:
-            (ASSETS / name).write_bytes(data)
+    try:
+        for name in FILES:
+            data = fetch(tag, name, doc)
+            if name == "index.css":
+                (ASSETS / name).write_text(
+                    data.decode("utf-8") + DARK_OVERRIDE + VISUAL_OVERRIDE,
+                    encoding="utf-8")
+            else:
+                (ASSETS / name).write_bytes(data)
+    except (_integrity.IntegrityError, RuntimeError) as e:
+        print(f"[X] {e}")
+        return 1
 
     print("[3/3] 写入版本标记并校验")
     (ASSETS / "ASSETS_VERSION").write_text(tag.lstrip("v") + "\n",

@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "pinned_version": "v0.47.0",
+  "strategy": "upstream-digest",
+  "digest_source": "按 dufs 官方 v0.47.0 的 assets 原始文件计算（jsDelivr 与 raw.githubusercontent.com 同源），2026-11-03",
+  "note": "index.css 的校验针对上游原始文件；脚本先验证原始字节，再追加本地深色/视觉覆盖层。若某来源的 sha256 留空，则首次下载按 TOFU 记录并写回本文件，该策略不等价于上游签名。",
+  "mirrors": [
+    "jsdelivr",
+    "raw.githubusercontent.com"
+  ],
+  "assets": {
+    "index.html": {
+      "sha256": "4322be974d8e1179624c0ec003a78e1d928b6a52a9ac7bb3d6a924940d1ccf7e",
+      "sources": {
+        "jsdelivr": "4322be974d8e1179624c0ec003a78e1d928b6a52a9ac7bb3d6a924940d1ccf7e",
+        "raw.githubusercontent.com": "4322be974d8e1179624c0ec003a78e1d928b6a52a9ac7bb3d6a924940d1ccf7e"
+      }
+    },
+    "index.css": {
+      "sha256": "f3f82b2c9d880287492ce4369cfb43ae89374ee6c749c7023a64209a682cffa5",
+      "sources": {
+        "jsdelivr": "f3f82b2c9d880287492ce4369cfb43ae89374ee6c749c7023a64209a682cffa5",
+        "raw.githubusercontent.com": "f3f82b2c9d880287492ce4369cfb43ae89374ee6c749c7023a64209a682cffa5"
+      }
+    },
+    "index.js": {
+      "sha256": "2bd911ea659d239d8dc2aaca591ce9925d44a6396af8962d4b01b5af9da04875",
+      "sources": {
+        "jsdelivr": "2bd911ea659d239d8dc2aaca591ce9925d44a6396af8962d4b01b5af9da04875",
+        "raw.githubusercontent.com": "2bd911ea659d239d8dc2aaca591ce9925d44a6396af8962d4b01b5af9da04875"
+      }
+    },
+    "favicon.ico": {
+      "sha256": "092a155f9ba0dad3b38591bbc1b7185c74c7bec19892c895c01dddee6cf9fca7",
+      "sources": {
+        "jsdelivr": "092a155f9ba0dad3b38591bbc1b7185c74c7bec19892c895c01dddee6cf9fca7",
+        "raw.githubusercontent.com": "092a155f9ba0dad3b38591bbc1b7185c74c7bec19892c895c01dddee6cf9fca7"
+      }
+    }
+  }
+}

@@ -36,7 +36,10 @@ class HealthResult:
 
 
 def probe_once(url: str, timeout: float = DEFAULT_TIMEOUT) -> HealthResult:
-    """对 dufs 的 /__dufs__/health 发一次 HEAD 请求。"""
+    """对 dufs 的 /__dufs__/health 发一次 HEAD 请求。
+
+    dufs 0.47 的 health 接口不受访问口令保护，这里不发送任何凭据。
+    """
     parsed = urlsplit(url)
     host = parsed.hostname
     if not host:
@@ -55,7 +58,8 @@ def probe_once(url: str, timeout: float = DEFAULT_TIMEOUT) -> HealthResult:
                 context=ssl._create_unverified_context())
         else:
             conn = http.client.HTTPConnection(host, port, timeout=timeout)
-        conn.request("HEAD", path, headers={"User-Agent": "DufsGui-health"})
+        conn.request("HEAD", path,
+                     headers={"User-Agent": "DufsGui-health"})
         resp = conn.getresponse()
         latency = (time.monotonic() - start) * 1000
         ok = 200 <= resp.status < 400

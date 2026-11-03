@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "pinned_version": "v0.47.0",
+  "strategy": "upstream-digest",
+  "digest_source": "GitHub Releases API（sigoden/dufs v0.47.0）assets[].digest 的 sha256 字段，读取于 2026-11-03",
+  "note": "每个镜像都必须返回与官方资产逐字节一致的内容；任一来源哈希不符会立即失败，不会静默换源。若某来源的 sha256 留空，则首次下载按 TOFU 记录并写回本文件：该策略只能发现下载后被替换，无法发现首次下载即被投毒，不等价于上游签名。",
+  "mirrors": [
+    "github",
+    "ghfast.top",
+    "gh-proxy.com",
+    "ghproxy.net",
+    "mirror.ghproxy.com"
+  ],
+  "assets": {
+    "win64": {
+      "filename": "dufs-v0.47.0-x86_64-pc-windows-msvc.zip",
+      "sha256": "39a000b70de423b7200f17099fa734cb6e154d8c6ef6a7d4ec9b2961cb66d0f1",
+      "sources": {
+        "github": "39a000b70de423b7200f17099fa734cb6e154d8c6ef6a7d4ec9b2961cb66d0f1",
+        "ghfast.top": "39a000b70de423b7200f17099fa734cb6e154d8c6ef6a7d4ec9b2961cb66d0f1",
+        "gh-proxy.com": "39a000b70de423b7200f17099fa734cb6e154d8c6ef6a7d4ec9b2961cb66d0f1",
+        "ghproxy.net": "39a000b70de423b7200f17099fa734cb6e154d8c6ef6a7d4ec9b2961cb66d0f1",
+        "mirror.ghproxy.com": "39a000b70de423b7200f17099fa734cb6e154d8c6ef6a7d4ec9b2961cb66d0f1"
+      }
+    },
+    "win-arm64": {
+      "filename": "dufs-v0.47.0-aarch64-pc-windows-msvc.zip",
+      "sha256": "bc7ce886b90c1954c3973eb0439cd189c8532c53ed93d122f7a8c572c9ecb063",
+      "sources": {
+        "github": "bc7ce886b90c1954c3973eb0439cd189c8532c53ed93d122f7a8c572c9ecb063",
+        "ghfast.top": "bc7ce886b90c1954c3973eb0439cd189c8532c53ed93d122f7a8c572c9ecb063",
+        "gh-proxy.com": "bc7ce886b90c1954c3973eb0439cd189c8532c53ed93d122f7a8c572c9ecb063",
+        "ghproxy.net": "bc7ce886b90c1954c3973eb0439cd189c8532c53ed93d122f7a8c572c9ecb063",
+        "mirror.ghproxy.com": "bc7ce886b90c1954c3973eb0439cd189c8532c53ed93d122f7a8c572c9ecb063"
+      }
+    },
+    "linux64": {
+      "filename": "dufs-v0.47.0-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "c715c44b195f6133ca0f47e6fdc8d6015ec64b7fd9ac8e1c578ca23a92206aa4",
+      "sources": {
+        "github": "c715c44b195f6133ca0f47e6fdc8d6015ec64b7fd9ac8e1c578ca23a92206aa4",
+        "ghfast.top": "c715c44b195f6133ca0f47e6fdc8d6015ec64b7fd9ac8e1c578ca23a92206aa4",
+        "gh-proxy.com": "c715c44b195f6133ca0f47e6fdc8d6015ec64b7fd9ac8e1c578ca23a92206aa4",
+        "ghproxy.net": "c715c44b195f6133ca0f47e6fdc8d6015ec64b7fd9ac8e1c578ca23a92206aa4",
+        "mirror.ghproxy.com": "c715c44b195f6133ca0f47e6fdc8d6015ec64b7fd9ac8e1c578ca23a92206aa4"
+      }
+    },
+    "linux-arm64": {
+      "filename": "dufs-v0.47.0-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "faf1c961ad47c5d636b14956b6279e1278453517cd5d3c274d21d522b495800a",
+      "sources": {
+        "github": "faf1c961ad47c5d636b14956b6279e1278453517cd5d3c274d21d522b495800a",
+        "ghfast.top": "faf1c961ad47c5d636b14956b6279e1278453517cd5d3c274d21d522b495800a",
+        "gh-proxy.com": "faf1c961ad47c5d636b14956b6279e1278453517cd5d3c274d21d522b495800a",
+        "ghproxy.net": "faf1c961ad47c5d636b14956b6279e1278453517cd5d3c274d21d522b495800a",
+        "mirror.ghproxy.com": "faf1c961ad47c5d636b14956b6279e1278453517cd5d3c274d21d522b495800a"
+      }
+    },
+    "mac-x64": {
+      "filename": "dufs-v0.47.0-x86_64-apple-darwin.tar.gz",
+      "sha256": "f7df8da364ea46aefbc456855ac44bbfbbd05972ab99f966d09e2b4541d55039",
+      "sources": {
+        "github": "f7df8da364ea46aefbc456855ac44bbfbbd05972ab99f966d09e2b4541d55039",
+        "ghfast.top": "f7df8da364ea46aefbc456855ac44bbfbbd05972ab99f966d09e2b4541d55039",
+        "gh-proxy.com": "f7df8da364ea46aefbc456855ac44bbfbbd05972ab99f966d09e2b4541d55039",
+        "ghproxy.net": "f7df8da364ea46aefbc456855ac44bbfbbd05972ab99f966d09e2b4541d55039",
+        "mirror.ghproxy.com": "f7df8da364ea46aefbc456855ac44bbfbbd05972ab99f966d09e2b4541d55039"
+      }
+    },
+    "mac-arm64": {
+      "filename": "dufs-v0.47.0-aarch64-apple-darwin.tar.gz",
+      "sha256": "8a9dd5f67f1d32e5808ca3cf1b5499322cd48d2cc82562b1984b49ebaef331ee",
+      "sources": {
+        "github": "8a9dd5f67f1d32e5808ca3cf1b5499322cd48d2cc82562b1984b49ebaef331ee",
+        "ghfast.top": "8a9dd5f67f1d32e5808ca3cf1b5499322cd48d2cc82562b1984b49ebaef331ee",
+        "gh-proxy.com": "8a9dd5f67f1d32e5808ca3cf1b5499322cd48d2cc82562b1984b49ebaef331ee",
+        "ghproxy.net": "8a9dd5f67f1d32e5808ca3cf1b5499322cd48d2cc82562b1984b49ebaef331ee",
+        "mirror.ghproxy.com": "8a9dd5f67f1d32e5808ca3cf1b5499322cd48d2cc82562b1984b49ebaef331ee"
+      }
+    }
+  }
+}
