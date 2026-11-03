@@ -308,6 +308,7 @@ class DufsProcess:
             popen_kwargs["creationflags"] = CREATE_NO_WINDOW
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = 0  # SW_HIDE：双保险，避免任何控制台闪现
             popen_kwargs["startupinfo"] = si
 
         # 给外部程序一个干净的库搜索环境，启动完立刻恢复本进程的设置

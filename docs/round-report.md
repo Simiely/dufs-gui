@@ -214,3 +214,59 @@ Win10 直角接受。证据：`spike-legacy-rgn.png` / `spike-legacy-rgn-zoom.pn
 
 开工前 `git status` 无他人改动，`git log -5` 顶部为 `9d6b23b`；本轮所有改动均为本会话产出，
 未发现接手会话留下的额外提交或冲突文件。
+
+## 11. 批次 6b：控制台黑框核实 + 删除确认框
+
+### 11.1 黑框：先核实，再加固
+
+核实顺序与结论：
+
+1. **代码**：`core/server.py` 的 `popen_kwargs` 原本就有 `stdout=PIPE`、`stderr=STDOUT`，
+   Windows 分支原本就有 `creationflags=CREATE_NO_WINDOW`，且 `version()` 探测也带该标志
+   （`core/dufsbin.py:213`）。本轮补齐 `STARTUPINFO`：`STARTF_USESHOWWINDOW` + `wShowWindow=0`
+   （SW_HIDE），作为第二层保险；非 Windows 分支未改。
+2. **打包**：`DufsGui.spec` 为 `console=False`，成品 PE subsystem = 2（Windows GUI），
+   不存在「debug 版 exe」被误发的迹象。
+3. **实测**（本轮新构建 v1.6.0，19:10 产物）：
+
+| 时点 | 可见控制台窗口 | conhost 数 | dufs 进程 | 5099 |
+| --- | --- | --- | --- | --- |
+| 启动前 | 0（另有 1 个隐藏 `ConsoleWindowClass`，pid 27128，早于本次启动存在） | 20 | 无 | 关闭 |
+| 运行中 | 0（同一隐藏窗口，列表无新增） | 21 | 1 个 | 监听 |
+| 停止后 | 0（同一隐藏窗口） | 20 | 无 | 关闭 |
+
+- 运行期多出的 1 个 `conhost.exe` 经 `Win32_Process.ParentProcessId` 确认父进程 = `dufs.exe`：
+  这是 `CREATE_NO_WINDOW` 下**无窗口**的控制台宿主，不是用户看到的黑框形态。
+- 日志证据（`round6-01-frozen-running.png` 日志区）：`[命令]` → `已启动` →
+  `[仅本机] Listening on http://127.0.0.1:5099/` → `HEAD` 请求，说明输出仍被 PIPE 接管并进日志。
+- 结论：当前代码与产物**不可复现**常驻黑框。若用户仍见黑框，基本可判定其运行的是旧版
+  或 debug（`console=True`）构建；本轮的 SW_HIDE 加固对「控制台闪现」也一并兜住。
+- 取证脚本 `C:\Temp\dufsgui_shots\console_probe.py`（窗口枚举 + `Win32_Process` 父子关系 +
+  `PrintWindow` 截图），原始 JSON `C:\Temp\dufsgui_shots\console-evidence.json`。
+
+### 11.2 删除方案：深色自绘模态确认框
+
+- 复用 `ui/dialog.py` 的 `ask_yes_no`（Toplevel + DWM 深色标题栏 + DWM 圆角 + 圆角卡片 +
+  `RoundButton`），未使用原生 `messagebox`。
+- 文案：`删除方案「X」？` / `此操作不可撤销`；按钮「删除」（`danger` 红 `#ff453a`）/「取消」。
+- 按键：`_key_results(default_ok=False)` → `<Escape>`=取消、`<Return>`=取消；
+  调用改用 `dialogs.ask_yes_no(..., destructive=True, default_ok=False)`。
+- 模态：`_modal` 内 `grab_set()` + `wait_window()`，期间主窗口不可操作。
+- 保存/应用未加确认（保持原行为）。
+- 尺寸修正：`_card` 取消 `expand`，`_modal` 先把窗口摆到屏幕外完成映射再量高，
+  确认框从 460×333（大片空白）收口为 460×142。
+- 实测（源码运行态，`capture_delete_confirm.py`）：
+  `esc_keeps=true`、`enter_keeps=true`、`delete_removes=true`（点「删除」后才移除）。
+- 截图：`round6-02-delete-confirm.png`（深色整窗）、`round6-02b-delete-dialog-full.png`、
+  `round6-02b-delete-dialog-full-3x.png`（圆角/描边抗锯齿特写）。
+
+### 11.3 回归与产物
+
+- 全量单测：**186 通过 / 1 跳过**（新增 `tests/test_popen_flags.py`，
+  `tests/test_ui_smoke.py` 增两条删除流程测试）。
+- `build.bat`：成功；`--selftest` 通过；`BUILD-INFO.txt` / `SHA256SUMS` 已重新生成。
+- 产物：`dist/DufsGui-v1.6.0.exe`，**15,711,066 字节**（上一版 15,670,029，+41,037 B），
+  SHA256 `CDF7314BF14D08A62D769E62A35BF033F2B44238133ED1C2C283FF8847F64BEC`。
+- 冻结复验：启动共享 → 5099 可连、日志有 dufs 输出、停止后 dufs 进程与端口均消失、无新增可见控制台。
+- 未验证：删除确认框截图为源码运行态（冻结版共用同一 `ui/dialog.py`，未在冻结版点选方案流程中复现）。
+

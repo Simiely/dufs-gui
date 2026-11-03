@@ -424,8 +424,10 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
 
     def _delete_profile(self) -> None:
         name = self.v_profile.get()
-        if name and dialogs.ask_yes_no(self, "删除方案", f"确定删除方案「{name}」？",
-                                       ok_text="删除", destructive=True):
+        if name and dialogs.ask_yes_no(
+                self, "删除方案",
+                f"删除方案「{name}」？\n此操作不可撤销",
+                ok_text="删除", destructive=True, default_ok=False):
             self.app_cfg.profiles.pop(name, None)
             self._reload_profiles()
             self._save()

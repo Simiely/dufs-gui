@@ -37,7 +37,9 @@ def _new_window(parent: tk.Misc, title: str) -> tk.Toplevel:
 def _card(win: tk.Toplevel) -> ttk.Frame:
     panel = RoundPanel(win, bg=DARK["bg"], radius=10,
                        padding=(SPACE["lg"], SPACE["md"]))
-    panel.pack(fill="both", expand=True, padx=SPACE["lg"], pady=(SPACE["lg"], 0))
+    # 不 expand：卡片按内容高度收口，配合 _modal 的自适应高度，短文案不会
+    # 被撑成一大块空白卡片。
+    panel.pack(fill="x", padx=SPACE["lg"], pady=(SPACE["lg"], 0))
     return panel.body
 
 
@@ -63,13 +65,17 @@ def _modal(win: tk.Toplevel, width: int, height: int | None = None) -> None:
     """
     parent = win.master
     try:
+        # 先在屏幕外完成一次布局再量高：withdraw 状态下收不到 <Configure>，
+        # 自适应卡片不会收口，量出来的高度会停在 Canvas 默认值。
+        win.geometry(f"{width}x{height or 320}+-10000+-10000")
+        win.deiconify()
+        win.update()          # 真正完成映射并触发 <Configure>
         win.update_idletasks()
         if height is None:
             height = max(win.winfo_reqheight(), 120)
         center_on_parent(win, parent, width, height)
     except Exception:
         win.geometry(f"{width}x{height or 200}")
-    win.deiconify()
     try:
         win.update_idletasks()
         enable_windows_dark_titlebar(win.winfo_id())
@@ -140,8 +146,14 @@ def ask_string(parent: tk.Misc, title: str, prompt: str,
 
 
 # ---------------- 确认 / 提示 ----------------
+def _key_results(default_ok: bool) -> dict[str, bool]:
+    """确认框按键语义：Esc 永远取消；Enter 默认取 default_ok（危险操作传 False）。"""
+    return {"<Escape>": False, "<Return>": bool(default_ok)}
+
+
 def ask_yes_no(parent: tk.Misc, title: str, message: str,
-               ok_text: str = "确定", destructive: bool = False) -> bool:
+               ok_text: str = "确定", destructive: bool = False,
+               default_ok: bool = True) -> bool:
     win = _new_window(parent, title)
     body = _card(win)
     _message_label(body, message)
@@ -155,8 +167,8 @@ def ask_yes_no(parent: tk.Misc, title: str, message: str,
                 height=28, radius=8,
                 kind="danger" if destructive else "accent", bg=DARK["bg"],
                 font=ui_font(9, "bold")).pack(side="right", padx=(0, SPACE["sm"]))
-    win.bind("<Escape>", lambda e: _finish(win, False))
-    win.bind("<Return>", lambda e: _finish(win, True))
+    for seq, result in _key_results(default_ok).items():
+        win.bind(seq, lambda e, r=result: _finish(win, r))
     _modal(win, 460)
     return bool(getattr(win, "_result", False))
 

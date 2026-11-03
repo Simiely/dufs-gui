@@ -70,6 +70,27 @@ class UiSmokeTest(unittest.TestCase):
             self.gui._switch_profile()
             self.assertEqual(self.gui.v_path.get(), td)
 
+    def test_delete_profile_cancel_keeps_it(self):
+        self.gui.app_cfg.profiles["待删"] = self.gui.current_config().to_dict()
+        self.gui._reload_profiles("待删")
+        with mock.patch.object(app_module.dialogs, "ask_yes_no",
+                               return_value=False):
+            self.gui._delete_profile()
+        self.assertIn("待删", self.gui.app_cfg.profiles)
+        self.gui.app_cfg.profiles.pop("待删", None)
+        self.gui._reload_profiles("")
+
+    def test_delete_profile_confirm_removes(self):
+        self.gui.app_cfg.profiles["待删"] = self.gui.current_config().to_dict()
+        self.gui._reload_profiles("待删")
+        with mock.patch.object(app_module.dialogs, "ask_yes_no",
+                               return_value=True) as asked:
+            self.gui._delete_profile()
+        self.assertNotIn("待删", self.gui.app_cfg.profiles)
+        self.assertEqual(asked.call_args.kwargs["ok_text"], "删除")
+        self.assertTrue(asked.call_args.kwargs["destructive"])
+        self.assertFalse(asked.call_args.kwargs["default_ok"])
+
     def test_empty_selection_blocks_start_without_dialog(self):
         """全部未选：不启动、不弹窗，只给一行状态提示。"""
         self.gui.bindlist.set_selection([])
