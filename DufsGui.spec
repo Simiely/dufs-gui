@@ -76,6 +76,14 @@ if os.path.isdir(WEBUI):
 else:
     print(f"[spec] 警告：{WEBUI} 目录不存在，将不带网页皮肤打包")
 
+# 上游 dufs 的双许可证原文 + 来源说明，随包分发以满足 MIT/Apache-2.0 的再分发要求
+LICENSES = os.path.join(ROOT, "licenses")
+if os.path.isdir(LICENSES):
+    datas.append((LICENSES, "licenses"))
+    print(f"[spec] 内置上游许可证：{LICENSES} -> licenses/")
+else:
+    print(f"[spec] 警告：{LICENSES} 不存在，产物将缺少 dufs 上游许可证")
+
 hiddenimports = [
     "core", "core.config", "core.dufsbin", "core.netutil", "core.server",
     "core.theme", "core.crashlog", "core.app_state", "core.winpos",

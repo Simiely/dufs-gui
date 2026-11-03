@@ -15,25 +15,35 @@
                           [开启共享] [停止]
 ```
 
-## 快速开始
+## 安装与启动
 
-**目前尚未发布 Release**。请从源码构建（Windows）：
+**目前尚未发布 Release**，有两种用法。
 
-```bat
-git clone https://github.com/Simiely/dufs-gui
-cd dufs-gui
-build.bat          :: 产出单个 dist\DufsGui-v1.5.0.exe
-```
+### 方式一：源码运行（最快看到界面）
 
-> 环境要求：**python.org 官方 Python 3.12.x**（conda / 嵌入式版的 tcl-tk 路径不一致，会闪退）。
-> 路径用纯英文。闪退或打包失败先跑 `build_debug.bat`，它把报错重定向到文件，看得见。
-
-**不想打包，直接跑源码**：
+环境要求：python.org 官方 CPython **3.12+**（本机验证 3.14.6；不要用 3.13.0、conda / 嵌入式版）。
 
 ```bat
-python tools\fetch_dufs.py    :: 下载 dufs.exe 到 bin\
+python tools\fetch_dufs.py    :: 固定 v0.47.0，逐来源 SHA256 校验
 python main.py
 ```
+
+### 方式二：本地打包
+
+```bat
+python -m pip install -r requirements.txt   :: 只装构建依赖，PyInstaller 固定 6.22.3
+build.bat                                   :: 产出 dist\DufsGui-v1.5.0.exe
+```
+
+`build.bat` 不再自动升级 PyInstaller：缺包时直接提示按 `requirements.txt` 安装，
+避免构建机与 CI 静默跑在不同版本上。路径用纯英文；闪退或打包失败先跑 `build_debug.bat`。
+
+### 首次启动预期
+
+- onefile 首次启动会先解压到 `%TEMP%\_MEI*`，通常 1–3 秒；属正常现象。
+- 首次运行创建 `%APPDATA%\DufsGui\config.json`，并把内置 dufs 释放到
+  `%LOCALAPPDATA%\DufsGui\bin\dufs.exe`。
+- 主窗口默认监听 `127.0.0.1:5000`；选好共享目录后点「开启共享」，再点「打开网页」。
 
 ## 主要能力
 
@@ -55,14 +65,29 @@ python main.py
 当前 **v1.5.0**。版本号唯一定义在 [`core/__init__.py`](core/__init__.py)，
 界面标题与打包产物名（`dist\DufsGui-v1.5.0.exe`）都从它派生。
 
+## 构建可复现与产物校验
+
+- PyInstaller 固定在 [`requirements.txt`](requirements.txt) 的 **6.22.3**（本机验证：
+  CPython 3.14.6 / Tk 8.6）。CI 与本地安装同一精确版本；未锁传递依赖哈希，
+  因为它是构建工具而非运行时依赖。
+- 每次打包生成 `dist\BUILD-INFO.txt`：记录实际 Python、PyInstaller、Tk、dufs、
+  皮肤版本与 Git 状态，回答"这个产物由哪套环境构建"。
+- 同时生成 `dist\SHA256SUMS`（sha256sum 格式）：exe + 关键构建输入
+  （`bin\dufs.exe`、`assets\`、`licenses\`、`requirements.txt`、spec、两份校验和清单）。
+  除 exe 外的条目是**打进包内的输入**，用于审计来源，不单独分发。
+- 校验：`Get-FileHash dist\DufsGui-v1.5.0.exe -Algorithm SHA256`，
+  或在仓库根目录执行 `sha256sum -c dist/SHA256SUMS`。
+
 ## 测试
 
 ```bat
-python -m unittest discover -s tests   :: 127 项，1 项自动跳过（皮肤 jsdom E2E）
+python -m unittest discover -s tests   :: 数量以实际输出为准；jsdom 皮肤 E2E 缺依赖时自动跳过
 ```
 
-Windows CI 见 [.github/workflows/windows-ci.yml](.github/workflows/windows-ci.yml)，
-矩阵为 Python 3.9 / 3.12，只跑标准库 `unittest`。
+Windows CI 见 [.github/workflows/windows-ci.yml](.github/workflows/windows-ci.yml)：
+单测 job 覆盖 Python 3.9 / 3.12；另有一个 **build-check** job，安装锁定依赖 → 打包
+onefile → `--selftest` → 断言产物非空并校验 SHA256SUMS。runner 没有交互桌面，
+因此 build-check 不启动 GUI；CI 不负责发布（无 tag 触发、无上传步骤）。
 
 ## 供应链校验
 
@@ -77,6 +102,29 @@ Windows CI 见 [.github/workflows/windows-ci.yml](.github/workflows/windows-ci.y
   留空，脚本会按 **TOFU（首次信任）** 记录哈希并写回清单：该策略只能发现
   "下载后被替换"，**无法发现首次下载即被投毒，不等价于上游签名**。
   升级版本时请先更新清单，不要让脚本跳过校验。
+
+## 常见问题
+
+| 现象 | 说明与处理 |
+|---|---|
+| SmartScreen 拦截"未知发布者" | exe 未签名且下载量少；点「更多信息 → 仍要运行」，或从源码自行构建 |
+| 杀毒软件报毒 / 隔离 | onefile 会往 `%TEMP%` 释放可执行文件并拉起 dufs，行为本身可疑；加白名单，或改 `DUFS_GUI_MODE=onedir` 打包（误报显著更低） |
+| 启动要 1–3 秒 | onefile 每次启动都解压到 `%TEMP%\_MEI*`；onedir 明显更快 |
+| 端口被占用 | 界面会提示并推荐空闲端口；也可 `netstat -ano \| findstr :5000` 查占用进程 |
+| 双击闪退、无报错 | 先跑 `build_debug.bat`（控制台 + 抓输出），或读 `%LOCALAPPDATA%\DufsGui\crash.log` |
+| 网页皮肤没生效 | 看日志是「已加入 --assets」还是「未传 --assets」；单文件共享不支持皮肤 |
+
+## 日志与配置位置
+
+| 内容 | 路径 | 说明 |
+|---|---|---|
+| 配置 | `%APPDATA%\DufsGui\config.json` | **Roaming**，用户设置随账户漫游 |
+| 崩溃日志 | `%LOCALAPPDATA%\DufsGui\crash.log` | **Local**，机器相关，不随账户漫游 |
+| dufs 缓存副本 | `%LOCALAPPDATA%\DufsGui\bin\dufs.exe` | 包内 dufs 释放到这里，避免每次从 `%TEMP%` 启动 |
+| 运行日志 | 界面「运行日志」区；导出路径由你选择 | 若配置了 dufs `--log-file`，写到指定文件 |
+
+`%APPDATA%` 与 `%LOCALAPPDATA%` 是**两个不同目录**，不要只翻 Local 找 `config.json`。
+设置环境变量 `DUFS_GUI_HOME=<目录>` 时，配置、crash.log 与 dufs 缓存都改落到该目录。
 
 ## 文档
 
@@ -93,14 +141,17 @@ Windows CI 见 [.github/workflows/windows-ci.yml](.github/workflows/windows-ci.y
 - 单实例只能挂一个共享目录（dufs 限制）；要多个就开多个程序实例
 - dufs 单文件模式（分享单个 iso 等）不走目录列表逻辑，网页皮肤不适用
 - 网页皮肤基于 dufs 官方 assets v0.47.0；dufs 升级后需用 `tools/fetch_skin.py` 重新抓取，HTML/JS 与 dufs 必须同版本
-- 访问口令以**明文**保存在本地配置文件（`%LOCALAPPDATA%\DufsGui\config.json` 或项目 `.dufsgui\config.json`）；HTTP 下口令也以明文经过网络，跨公网共享请自行启用 HTTPS
+- 访问口令以**明文**保存在本地配置文件（`%APPDATA%\DufsGui\config.json`，或 `DUFS_GUI_HOME` 指定目录）；HTTP 下口令也以明文经过网络，跨公网共享请自行启用 HTTPS
 - 关闭程序会结束 dufs；Windows 下父进程被强杀时由 Job Object 兜底，POSIX 下 SIGKILL 无法捕获（只能覆盖正常退出与 SIGTERM/SIGINT）
 
 ## License
 
 本项目代码采用 **MIT**，见 [LICENSE](LICENSE)。
 
-内置/随包下载的 dufs 二进制来自 [sigoden/dufs](https://github.com/sigoden/dufs)，
-上游按 **MIT OR Apache-2.0** 授权分发；本项目不改变上游许可。
-上游许可全文见 [LICENSE-MIT](https://github.com/sigoden/dufs/blob/main/LICENSE-MIT) /
-[LICENSE-APACHE](https://github.com/sigoden/dufs/blob/main/LICENSE-APACHE)。
+内置/随包下载的 dufs 二进制固定为 **v0.47.0**，来自 [sigoden/dufs](https://github.com/sigoden/dufs)，
+上游按 **MIT OR Apache-2.0** 双许可分发；本项目不改变上游许可。
+两份许可原文已作为数据文件打进产物：源码树 [`licenses/`](licenses/)，
+运行时可在 exe 解压目录的 `licenses/` 下查看（`--selftest` 会列出）。
+上游许可：[LICENSE-MIT](https://github.com/sigoden/dufs/blob/v0.47.0/LICENSE-MIT) /
+[LICENSE-APACHE](https://github.com/sigoden/dufs/blob/v0.47.0/LICENSE-APACHE)；
+dufs 版本与二进制 SHA256 见 [`tools/dufs_checksums.json`](tools/dufs_checksums.json)。

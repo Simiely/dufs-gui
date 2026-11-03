@@ -5,8 +5,8 @@
 
 ## 技术栈
 
-- Python **3.9+**（打包推荐官方 CPython **3.12.x**），仅标准库：tkinter / ttk
-- 打包：PyInstaller（onefile 为主，支持 onedir）
+- Python **3.9+**（打包推荐官方 CPython **3.12.x**；本机验证 **3.14.6**），仅标准库：tkinter / ttk
+- 打包：PyInstaller **6.22.3**（版本钉在 `requirements.txt`，不要自动升级）
 - 被封装对象：**dufs**（Rust 编写的单文件服务器，以子进程方式拉起）
 - 网页皮肤：dufs 官方 assets v0.47.0 + CSS 覆盖层，零框架零 CDN
 
@@ -45,14 +45,17 @@
 ## 常用命令
 
 ```bat
+python -m pip install -r requirements.txt   :: 构建依赖（PyInstaller 6.22.3）
 build.bat              :: 打正式单文件 exe（dist\DufsGui-v1.5.0.exe）
 build_debug.bat        :: 诊断版：环境体检 + 控制台 + 抓输出（排错先跑它）
 run_debug.bat          :: 只运行已有 exe 并抓取全部输出
 python main.py         :: 源码直接跑
-python -m unittest discover -s tests   :: 跑全部测试（127 项，1 项 jsdom 跳过）
+python -m unittest discover -s tests   :: 跑全部测试（数量以输出为准，jsdom E2E 缺依赖时跳过）
 ```
 
-Windows CI：`.github/workflows/windows-ci.yml`，Python 3.9 / 3.12 矩阵。
+Windows CI：`.github/workflows/windows-ci.yml`，单测矩阵 Python 3.9 / 3.12，
+另有 `build-check` job（Python 3.14，锁定依赖 → onefile → `--selftest` → 校验 SHA256SUMS）。
+CI 不发布；runner 无桌面，build-check 不启动 GUI。
 
 打包开关（环境变量）：`DUFS_GUI_MODE=onefile|onedir`、`DUFS_GUI_CONSOLE=1`、`DUFS_GUI_COLLECT_TK=1`。
 
@@ -62,6 +65,7 @@ Windows CI：`.github/workflows/windows-ci.yml`，Python 3.9 / 3.12 矩阵。
 
 ## 平台限制
 
-Windows CI 已覆盖 127 项单测（Python 3.9 / 3.12；1 项 jsdom 皮肤 E2E 自动跳过），
-并在本机验证过真实 Tk 窗口构造与端口输入。**GUI 的视觉观感、网页皮肤的实际效果
-仍需在真实 Windows 桌面上确认**，涉及视觉的判断一律以实机结果为准。
+Windows CI 已覆盖单测（Python 3.9 / 3.12；jsdom 皮肤 E2E 自动跳过）与冻结产物
+`--selftest` / SHA256SUMS 校验，并在本机验证过真实 Tk 窗口构造与端口输入。
+**GUI 的视觉观感、网页皮肤的实际效果仍需在真实 Windows 桌面上确认**，
+涉及视觉的判断一律以实机结果为准。

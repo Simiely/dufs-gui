@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   unittest:
     runs-on: windows-latest
@@ -20,3 +23,56 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+
+  build-check:
+    # 只做构建校验，不发布：没有 tag 触发、没有上传步骤。
+    # windows-latest 无交互桌面会话，所以这里只跑 --selftest
+    # （冻结启动 + Tcl/Tk + 内置资源），不启动 GUI；界面导入由本机冒烟覆盖。
+    runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: utf-8
+      DUFS_GUI_MODE: onefile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install pinned build dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Fetch pinned dufs binary
+        run: python tools/fetch_dufs.py
+      - name: Build onefile exe
+        run: python -m PyInstaller --noconfirm --clean DufsGui.spec
+      - name: Selftest and assert artifact
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist -Filter "DufsGui-*.exe" | Select-Object -First 1
+          if (-not $exe) { throw "dist/ 下没有 DufsGui*.exe" }
+          if ($exe.Length -le 0) { throw "产物为空文件" }
+          Write-Host "exe: $($exe.FullName) ($($exe.Length) bytes)"
+          & $exe.FullName --selftest
+          if ($LASTEXITCODE -ne 0) { throw "selftest 退出码 $LASTEXITCODE" }
+          Write-Host "selftest OK"
+      - name: Build metadata and checksums
+        shell: pwsh
+        run: |
+          python tools/build_info.py
+          Get-Content dist/BUILD-INFO.txt
+          Get-Content dist/SHA256SUMS
+      - name: Verify checksums
+        shell: pwsh
+        run: |
+          $bad = @()
+          foreach ($line in Get-Content dist/SHA256SUMS) {
+            $parts = $line -split '  ', 2
+            if ($parts.Count -ne 2) { $bad += "格式错误: $line"; continue }
+            $expected, $path = $parts
+            if (-not (Test-Path $path)) { $bad += "缺失: $path"; continue }
+            $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne $expected) { $bad += "哈希不符: $path" }
+          }
+          if ($bad.Count -gt 0) {
+            $bad | ForEach-Object { Write-Host $_ }
+            throw "SHA256SUMS 校验失败"
+          }
+          Write-Host "SHA256SUMS OK"

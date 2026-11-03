@@ -1,3 +1,6 @@
-# 运行 GUI 只需要 Python 标准库（tkinter 随官方 Python 安装包自带）
-# 打包成 exe 才需要下面这一行
-pyinstaller>=6.0
+# 运行 GUI 只需要 Python 标准库（tkinter 随官方 python.org 安装包自带）。
+# 下面这一行仅供打包：版本固定为本机与 CI 验证过的 6.22.3（2026-11-03，
+# CPython 3.14.6 / Tk 8.6，onefile + --selftest 通过）。
+# 未锁定传递依赖的哈希：PyInstaller 是构建工具而非运行时依赖，安装面窄；
+# 若需要完全可复现的构建环境，请在私有索引中用 --require-hashes 锁定全部传递依赖。
+pyinstaller==6.22.3

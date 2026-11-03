@@ -5,6 +5,20 @@
 
 ## [未发布]
 
+### 构建发布与文档（批次 3）
+
+- `requirements.txt` 把 PyInstaller 钉到 **6.22.3**；`build.bat` / `build_debug.bat` /
+  `build.sh` 缺包时不再自动 `pip install -U`，改为提示按 requirements 安装。
+- 新增 `tools/build_info.py`：打包后生成 `dist/BUILD-INFO.txt`（Python / PyInstaller /
+  Tk / dufs / 皮肤 / Git 状态）与 `dist/SHA256SUMS`（exe + 关键构建输入）。
+- 新增 `licenses/`：dufs v0.47.0 上游 MIT / Apache-2.0 许可原文与来源说明，
+  由 spec 打进包内；`--selftest` 会列出 `licenses/` 内容。
+- CI 保留单测 job，新增 `build-check` job：锁定依赖 → onefile → `--selftest`
+  → 断言产物非空 → 校验 SHA256SUMS；不上传、不发布。
+- README 补安装方式、首次启动预期、SmartScreen / 杀软 / 启动慢 / 端口占用 FAQ、
+  配置与日志位置，并修正 `%APPDATA%` 与 `%LOCALAPPDATA%` 的混淆。
+- 文档不再硬编码测试数量，改为以测试输出 / CI 日志为准。
+
 ### 重构：拆分界面与启动决策，配置 schema 版本化
 
 - `app.py` 从 1070 行降到约 540 行：主窗口布局、表单映射、高级设置弹窗拆到 `ui/`；

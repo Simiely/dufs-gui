@@ -235,6 +235,7 @@ def env_report() -> str:
         f"resource_dir: {resource_dir()}",
         f"验证结果    : {verify_assets_dir(webui_dir())[1]}",
         f"目录内容    : {_skin_files(webui_dir())}",
+        f"licenses    : {_skin_files(resource_dir() / 'licenses')}",
         f"executable  : {sys.executable}",
         f"argv0       : {sys.argv[0] if sys.argv else '(none)'}",
         f"cwd         : {os.getcwd()}",

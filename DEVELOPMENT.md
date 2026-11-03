@@ -42,16 +42,21 @@ assets/            dufs 官方 v0.47.0 网页皮肤 + CSS 覆盖层
 tools/             fetch_dufs.py（下载 dufs）、fetch_skin.py（同步官方皮肤）、
                    _integrity.py（固定版本 + 逐源 SHA256）、
                    *_checksums.json（官方 digest / TOFU 清单）、
-                   embed_dufs.py（可选 base64 内嵌）
-tests/             127 项单测（1 项 jsdom 皮肤 E2E 自动跳过）；
-                   tk_stub.py 提供无 tkinter 环境下的桩
+                   embed_dufs.py（可选 base64 内嵌）、
+                   build_info.py（生成 BUILD-INFO.txt 与 SHA256SUMS）
+licenses/          dufs 上游 MIT / Apache-2.0 许可原文 + 来源说明（随包分发）
+tests/             标准库 unittest；tk_stub.py 提供无 tkinter 环境下的桩
 ```
 
 测试与 CI：
 
-- 本地：`python -m unittest discover -s tests`，127 项，1 项 jsdom E2E 自动跳过
-- Windows CI：`.github/workflows/windows-ci.yml`，`windows-latest`，
-  矩阵 Python 3.9 / 3.12，只跑标准库 unittest
+- 本地：`python -m unittest discover -s tests`，测试数量以输出为准；
+  jsdom 皮肤 E2E 在缺依赖时自动跳过
+- Windows CI：`.github/workflows/windows-ci.yml`
+  - `unittest` job：`windows-latest`，矩阵 Python 3.9 / 3.12，只跑标准库 unittest
+  - `build-check` job：Python 3.14，安装 `requirements.txt` 锁定依赖 → 打包 onefile
+    → `--selftest` → 断言产物非空 → 生成并校验 BUILD-INFO/SHA256SUMS
+  - runner 无交互桌面，故只跑 `--selftest`，不启动 GUI；CI 不发布
 
 配置与启动（P1）：
 
@@ -61,6 +66,17 @@ tests/             127 项单测（1 项 jsdom 皮肤 E2E 自动跳过）；
 - 配置保存走同目录临时文件 + `os.replace`，避免崩溃留下半截 JSON。
 - 启动决策集中在 `core/launch.py` 的 `build_launch_plan(cfg)`：
   参数、皮肤诊断、降级参数、检查主机与 URL 都是纯数据，界面层只执行计划。
+
+构建与产物（P2）：
+
+- `requirements.txt` 固定 `pyinstaller==6.22.3`；`build.bat` / `build_debug.bat` /
+  `build.sh` 缺包时只提示按 requirements 安装，不再自动 `pip install -U`。
+- `build.bat` 打包后先跑 `--selftest`，再调用 `tools/build_info.py` 生成
+  `dist/BUILD-INFO.txt`（Python / PyInstaller / Tk / dufs / 皮肤 / Git 状态）
+  与 `dist/SHA256SUMS`（exe + 关键构建输入）。
+- dufs 上游 MIT / Apache-2.0 许可原文位于 `licenses/`，由 spec 打进 `licenses/`
+  随包分发；`--selftest` 的 `licenses` 行可用于确认冻结产物里确实带上了。
+- 当前本机验证产物：CPython 3.14.6 + PyInstaller 6.22.3 + Tk 8.6（详见 BUILD-INFO）。
 
 关键安全默认（P0）：
 

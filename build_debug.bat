@@ -16,7 +16,7 @@ echo.
 
 where python >nul 2>nul || (echo [X] python not found& goto :fail)
 
-echo ---------- [1/4] environment check ----------
+echo ---------- [1/5] environment check ----------
 for /f "delims=" %%v in ('python -c "import sys;print(sys.version.split()[0])"') do set PYVER=%%v
 echo Python: %PYVER%
 
@@ -38,13 +38,14 @@ python -c "import os,sys;sys.exit(0 if os.path.abspath(os.getcwd()).isascii() el
 python -m PyInstaller --version >nul 2>nul && (
   for /f "delims=" %%p in ('python -m PyInstaller --version') do echo PyInstaller: %%p
 ) || (
-  echo PyInstaller: not installed, installing...
-  python -m pip install -U pyinstaller -i https://mirrors.cloud.tencent.com/pypi/simple
+  echo [X] PyInstaller NOT installed.
+  echo     Install pinned build dependencies: python -m pip install -r requirements.txt
+  goto :fail
 )
 echo.
 if defined DBLCLK pause
 
-echo ---------- [2/4] build ONE FILE + console ----------
+echo ---------- [2/5] build ONE FILE + console ----------
 if not exist "bin\dufs.exe" (
   echo [!] bin\dufs.exe missing, trying to download...
   python tools\fetch_dufs.py
@@ -60,7 +61,7 @@ if errorlevel 1 (echo [X] Build failed& goto :fail)
 echo.
 if defined DBLCLK pause
 
-echo ---------- [3/4] selftest ----------
+echo ---------- [3/5] selftest ----------
 for %%f in ("dist\DufsGui*.exe") do set "EXE=%%f"
 if not defined EXE (echo [X] no exe found in dist\& goto :fail)
 echo exe: %EXE%
@@ -71,9 +72,16 @@ echo ---- selftest output ----
 type "%LOGF%"
 echo ---- exit code !RC1! ----
 echo.
+if not "!RC1!"=="0" (
+  echo [X] selftest failed - the frozen exe cannot start.
+  goto :fail
+)
 if defined DBLCLK pause
 
-echo ---------- [4/4] run main program ----------
+echo ---------- [4/5] build metadata ----------
+python tools\build_info.py "%EXE%"
+
+echo ---------- [5/5] run main program ----------
 echo If OK: a window appears. Close it manually, then come back here.
 echo If it crashes: returns immediately, error stays in the log below.
 echo.
