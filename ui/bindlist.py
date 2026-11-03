@@ -16,6 +16,8 @@ from typing import Callable, Iterable
 from core.netif import NetIf
 from core.theme import DARK, SPACE, fonts
 
+from .common import emoji_font
+
 ROW_HEIGHT = 30
 VISIBLE_ROWS = 5
 
@@ -119,30 +121,36 @@ class BindCheckList(ttk.Frame):
         row.grid(row=index, column=0, sticky="ew")
         row.grid_propagate(False)
         self.inner.columnconfigure(0, weight=1)
-        row.columnconfigure(1, weight=1)
+        row.columnconfigure(2, weight=1)
 
         from core.theme import ThemedCheckbutton
         cb = ThemedCheckbutton(row, variable=var, bg_key="panel",
                                takefocus=False, onvalue=True, offvalue=False)
-        cb.grid(row=0, column=0, padx=(2, SPACE["sm"]), pady=SPACE["xs"], sticky="w")
+        cb.grid(row=0, column=0, padx=(2, SPACE["xs"]), pady=SPACE["xs"], sticky="w")
+
+        # 图标单独一列、固定宽度，避免不同 emoji 的实际字宽不同把后面的列挤歪
+        icon = tk.Label(row, text=item.icon, bg=c["panel"],
+                        fg=c["fg"] if item.bindable else c["muted"],
+                        font=emoji_font(11), anchor="center", width=2)
+        icon.grid(row=0, column=1, sticky="w", padx=(0, SPACE["xs"]))
 
         name = tk.Label(row, text=item.display_name, bg=c["panel"],
                         fg=c["fg"] if item.bindable else c["muted"],
-                        font=f["body"], anchor="w", width=13)
-        name.grid(row=0, column=1, sticky="ew")
+                        font=f["body"], anchor="w", width=11)
+        name.grid(row=0, column=2, sticky="ew")
 
         address = item.address or "无地址"
         addr = tk.Label(row, text=address, bg=c["panel"],
                         fg=c["fg"] if item.bindable else c["muted"],
-                        font=f["mono"], anchor="w", width=15)
-        addr.grid(row=0, column=2, sticky="w", padx=(SPACE["sm"], SPACE["sm"]))
+                        font=f["mono"], anchor="w", width=14)
+        addr.grid(row=0, column=3, sticky="w", padx=(SPACE["sm"], SPACE["sm"]))
 
         status = tk.Label(row, text=item.status_text, bg=c["panel"],
                           fg=c["muted"] if item.bindable else c["border"],
-                          font=f["caption"], anchor="e", width=14)
-        status.grid(row=0, column=3, sticky="e", padx=(0, SPACE["sm"]))
+                          font=f["caption"], anchor="e", width=12)
+        status.grid(row=0, column=4, sticky="e", padx=(0, SPACE["sm"]))
 
-        widgets = (row, name, addr, status)
+        widgets = (row, icon, name, addr, status)
         for widget in widgets:
             widget.bind("<Button-1>", lambda e, i=index: self._click_row(i))
             widget.bind("<Enter>", lambda e, i=index: self._hover_row(i, True))
@@ -151,7 +159,7 @@ class BindCheckList(ttk.Frame):
         cb.bind("<Button-1>", lambda e, i=index: self._click_check(i))
         if not item.bindable or not self._enabled:
             cb.configure(state="disabled")
-        return {"row": row, "cb": cb, "labels": (name, addr, status),
+        return {"row": row, "cb": cb, "labels": (icon, name, addr, status),
                 "item": item, "row_index": index}
 
     def _destroy_rows(self) -> None:

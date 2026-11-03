@@ -1,9 +1,9 @@
 """主窗口布局：只负责搭控件，不处理启停、配置或进程。
 
 信息层级（macOS 深色风格）：
+  顶部：标题（可自定义）+ 右侧「开启共享 / 停止」
   左列：共享目录 → 共享网卡（勾选列表 + 端口）→ 配置方案 → 高级入口
-  右列：服务状态（每地址一行）→ 运行日志
-  底部：命令预览 + 开启/停止
+  右列：服务状态（每地址一行 + 二维码）→ 运行日志
 
 层次用背景色差表达（#1e1e1e 底 / #232325 卡片 / #2c2c2e 控件），
 卡片只保留 1px 低对比描边；间距按 8pt 栅格，组间大于组内。
@@ -17,7 +17,7 @@ from tkinter import ttk
 from core.theme import DARK, SPACE, ThemedCombobox, fonts
 
 from .bindlist import BindCheckList
-from .common import APP_NAME, ui_font
+from .common import emoji_font, ui_font
 
 
 class MainLayoutMixin:
@@ -25,20 +25,28 @@ class MainLayoutMixin:
 
     # ---------------- 界面 ----------------
     def _build_ui(self) -> None:
-        f = fonts()
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
         header = ttk.Frame(self, padding=(SPACE["xl"], SPACE["lg"], SPACE["xl"], SPACE["sm"]))
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text=APP_NAME, style="Title.TLabel").grid(
+        ttk.Label(header, textvariable=self.v_app_title, style="Title.TLabel").grid(
             row=0, column=0, sticky="w")
         ttk.Label(header, text="固定深色 · 基于 dufs 的轻量文件共享",
                   style="Subtitle.TLabel").grid(row=1, column=0, sticky="w",
                                                 pady=(SPACE["xs"], 0))
+        actions = ttk.Frame(header)
+        actions.grid(row=0, column=1, rowspan=2, sticky="e", padx=(SPACE["md"], 0))
+        self.btn_start = ttk.Button(actions, text="开启共享", width=10,
+                                    style="ToolbarAccent.TButton", command=self._start)
+        self.btn_start.pack(side="left")
+        self.btn_stop = ttk.Button(actions, text="停止", width=7,
+                                   style="ToolbarDanger.TButton", command=self._stop,
+                                   state="disabled")
+        self.btn_stop.pack(side="left", padx=(SPACE["sm"], 0))
 
-        body = ttk.Frame(self, padding=(SPACE["lg"], 0, SPACE["lg"], SPACE["sm"]))
+        body = ttk.Frame(self, padding=(SPACE["lg"], 0, SPACE["lg"], SPACE["md"]))
         body.grid(row=1, column=0, sticky="nsew")
         body.columnconfigure(0, weight=5, uniform="col")
         body.columnconfigure(1, weight=6, uniform="col")
@@ -59,8 +67,6 @@ class MainLayoutMixin:
 
         self._build_status_card(right, 0)
         self._build_log_card(right, 1)
-
-        self._build_footer()
 
     def _card(self, parent: ttk.Frame, row: int, title: str,
               fill: str = "ew", pady_bottom: int = SPACE["md"]) -> ttk.Frame:
@@ -164,6 +170,15 @@ class MainLayoutMixin:
         self.lbl_url = ttk.Label(box, textvariable=self.v_url, style="Status.TLabel",
                                  font=ui_font(9), anchor="w")
         self.lbl_url.grid(row=2, column=1, sticky="ew", pady=(0, SPACE["sm"]))
+        # 二维码入口紧挨链接；emoji 用专用字体，避免被中文字体渲染成方块
+        self.btn_qr = tk.Button(box, text="📱", font=emoji_font(12), width=2,
+                                bg=DARK["panel"], fg=DARK["fg"],
+                                activebackground=DARK["sel"],
+                                activeforeground=DARK["fg"],
+                                bd=0, highlightthickness=0, relief="flat",
+                                cursor="hand2", takefocus=True,
+                                command=self._open_qr)
+        self.btn_qr.grid(row=2, column=2, sticky="e", padx=(SPACE["sm"], 0))
 
         self.status_rows_host = tk.Frame(box, bg=DARK["panel"])
         self.status_rows_host.grid(row=3, column=0, columnspan=3, sticky="ew")
@@ -176,10 +191,38 @@ class MainLayoutMixin:
         self.btn_open.pack(side="left", padx=(0, SPACE["sm"]))
         self.btn_copy = ttk.Button(ops, text="复制地址", width=9,
                                    command=self._copy_url)
-        self.btn_copy.pack(side="left", padx=(0, SPACE["sm"]))
-        self.btn_detail = ttk.Button(ops, text="失败详情…", style="Ghost.TButton",
-                                     command=self._show_failures, state="disabled")
-        self.btn_detail.pack(side="left")
+        self.btn_copy.pack(side="left")
+
+        # 失败详情：没有失败时整块 grid_remove（不占空白），有失败才出现
+        self.detail_holder = tk.Frame(box, bg=DARK["panel"])
+        self.detail_holder.grid(row=5, column=0, columnspan=3, sticky="ew",
+                                pady=(SPACE["sm"], 0))
+        self.detail_holder.columnconfigure(0, weight=1)
+        dhead = tk.Frame(self.detail_holder, bg=DARK["panel"])
+        dhead.grid(row=0, column=0, sticky="ew")
+        dhead.columnconfigure(0, weight=1)
+        self.lbl_detail_title = tk.Label(dhead, text="启动失败详情", bg=DARK["panel"],
+                                         fg=DARK["danger"], font=ui_font(9, "bold"),
+                                         anchor="w")
+        self.lbl_detail_title.grid(row=0, column=0, sticky="w")
+        self.btn_detail_toggle = ttk.Button(dhead, text="展开", style="Ghost.TButton",
+                                            command=self._toggle_detail)
+        self.btn_detail_toggle.grid(row=0, column=1, sticky="e")
+        self.detail_body = tk.Frame(self.detail_holder, bg=DARK["panel"])
+        self.detail_body.grid(row=1, column=0, sticky="ew", pady=(SPACE["xs"], 0))
+        self.detail_body.columnconfigure(0, weight=1)
+        self.detail_text = tk.Text(self.detail_body, height=3, width=1, wrap="word",
+                                   relief="flat", borderwidth=0,
+                                   font=fonts()["caption"],
+                                   bg=DARK["well"], fg="#e5e5e7",
+                                   insertbackground=DARK["fg"],
+                                   selectbackground=DARK["accent"],
+                                   selectforeground=DARK["accent_fg"],
+                                   padx=SPACE["sm"], pady=SPACE["xs"])
+        self.detail_text.grid(row=0, column=0, sticky="ew")
+        self.detail_text.configure(state="disabled")
+        self.detail_holder.grid_remove()
+        self.detail_expanded = True
 
     def _build_log_card(self, parent: ttk.Frame, row: int) -> None:
         box = self._card(parent, row, "", fill="nsew", pady_bottom=0)
@@ -219,28 +262,6 @@ class MainLayoutMixin:
                                 xscrollcommand=self.log_hsb.set)
         self.log_scrollbars = (self.log_vsb, self.log_hsb)
         self.log_text.configure(state="disabled")
-
-    def _build_footer(self) -> None:
-        footer = ttk.Frame(self, padding=(SPACE["lg"], SPACE["sm"],
-                                          SPACE["lg"], SPACE["md"]))
-        footer.grid(row=2, column=0, sticky="ew")
-        footer.columnconfigure(0, weight=1)
-        footer.rowconfigure(0, minsize=48)
-        # 用 Message 自动按宽度换行：避免写死 wraplength 后与实际宽度不符，
-        # 命令被截断或换行位置错乱。
-        self.lbl_cmd = tk.Message(footer, text="", width=520, justify="left",
-                                  anchor="w", bg=DARK["bg"], fg=DARK["muted"],
-                                  font=("Consolas", 9), padx=0, pady=0)
-        self.lbl_cmd.grid(row=0, column=0, sticky="w")
-        actions = ttk.Frame(footer)
-        actions.grid(row=0, column=1, sticky="e", padx=(SPACE["md"], 0))
-        self.btn_start = ttk.Button(actions, text="开启共享", width=10,
-                                    style="Accent.TButton", command=self._start)
-        self.btn_start.pack(side="left")
-        self.btn_stop = ttk.Button(actions, text="停止", width=7,
-                                   style="Danger.TButton", command=self._stop,
-                                   state="disabled")
-        self.btn_stop.pack(side="left", padx=(SPACE["sm"], 0))
 
 
 def f_small():

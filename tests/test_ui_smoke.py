@@ -167,16 +167,16 @@ class UiSmokeTest(unittest.TestCase):
         infos = []
         logs = []
         orig_open = app_module.webbrowser.open
-        orig_info = app_module.messagebox.showinfo
+        orig_info = app_module.dialogs.show_info
         orig_log = self.gui._log
         app_module.webbrowser.open = lambda *a, **k: opened.append(a)
-        app_module.messagebox.showinfo = lambda title, msg: infos.append((title, msg))
+        app_module.dialogs.show_info = lambda parent, title, msg: infos.append((title, msg))
         self.gui._log = lambda line: logs.append(line)
         try:
             self.gui._open_browser()
         finally:
             app_module.webbrowser.open = orig_open
-            app_module.messagebox.showinfo = orig_info
+            app_module.dialogs.show_info = orig_info
             self.gui._log = orig_log
         self.assertEqual(opened, [], "未运行时不应打开浏览器")
         self.assertTrue(infos and "服务未运行" in infos[-1][0])
@@ -188,16 +188,16 @@ class UiSmokeTest(unittest.TestCase):
             errors = []
             logs = []
             orig_save = app_module.filedialog.asksaveasfilename
-            orig_err = app_module.messagebox.showerror
+            orig_err = app_module.dialogs.show_error
             orig_log = self.gui._log
             app_module.filedialog.asksaveasfilename = lambda **kw: td
-            app_module.messagebox.showerror = lambda title, msg: errors.append((title, msg))
+            app_module.dialogs.show_error = lambda parent, title, msg: errors.append((title, msg))
             self.gui._log = lambda line: logs.append(line)
             try:
                 self.gui._export_log()  # 目录不能直接 write_text
             finally:
                 app_module.filedialog.asksaveasfilename = orig_save
-                app_module.messagebox.showerror = orig_err
+                app_module.dialogs.show_error = orig_err
                 self.gui._log = orig_log
             self.assertTrue(errors and "导出失败" in errors[-1][0])
             self.assertTrue(any("日志导出失败" in x for x in logs))
@@ -294,8 +294,8 @@ class UiSmokeTest(unittest.TestCase):
         self.assertNotIn("--assets", self.gui.current_config().to_args())
         self.gui.v_custom_ui.set(True)
 
-    def test_auth_config_and_preview_redaction(self):
-        """高级设置里的口令应进入 -a 参数，但预览不得显示明文。"""
+    def test_auth_config_and_command_redaction(self):
+        """口令进入 -a 参数；日志/等效命令不得显示明文。"""
         try:
             self.gui.v_auth_user.set("alice")
             self.gui.v_auth_pass.set("s3cret")
@@ -304,9 +304,10 @@ class UiSmokeTest(unittest.TestCase):
             self.assertIn("-a", args)
             # dufs 0.47 的 -a 必须带路径规则（user:pass@/path[:perm]）
             self.assertEqual(args[args.index("-a") + 1], "alice:s3cret@/:rw")
-            self.gui._refresh_preview()
-            self.assertNotIn("s3cret", self.gui.lbl_cmd["text"])
-            self.assertIn("alice:***", self.gui.lbl_cmd["text"])
+            line = cfg.command_line(binary="dufs.exe")
+            self.assertIn("-a", line)
+            self.assertIn("alice:***@/:rw", line)
+            self.assertNotIn("s3cret", line)
         finally:
             self.gui.v_auth_user.set("")
             self.gui.v_auth_pass.set("")
@@ -320,9 +321,96 @@ class UiSmokeTest(unittest.TestCase):
         finally:
             self.gui.adv_win = None
 
-    def test_command_preview(self):
-        self.gui._refresh_preview()
-        self.assertIn("等效命令", self.gui.lbl_cmd["text"])
+    # ---------------- 本轮新增交互 ----------------
+    def test_window_title_persists_and_falls_back(self):
+        """标题写盘后重启仍生效；空值回落默认标题。"""
+        from core.config import load_config
+
+        old = self.gui.app_cfg.window_title
+        try:
+            self.gui.v_window_title.set("实验室文件共享")
+            self.gui._apply_window_title_setting()
+            self.assertEqual(self.gui.v_app_title.get(), "实验室文件共享")
+            self.assertEqual(load_config().window_title, "实验室文件共享")
+
+            self.gui.v_window_title.set("   ")
+            self.gui._apply_window_title_setting()
+            self.assertEqual(self.gui.v_app_title.get(), "Dufs GUI")
+            self.assertEqual(load_config().window_title, "")
+        finally:
+            self.gui.v_window_title.set(old)
+            self.gui._apply_window_title_setting()
+
+    def test_failure_detail_hidden_until_error(self):
+        from core.instances import InstanceState
+
+        self.gui.manager.states = []
+        self.gui._update_detail_area()
+        self.assertFalse(self.gui.detail_holder.winfo_ismapped(),
+                         "无失败时详情区必须整块收起")
+
+        self.gui.manager.states = [InstanceState(
+            bind="192.168.1.5", label="以太网", url="http://192.168.1.5:5000/",
+            port=5000, status="失败", detail="端口被占用")]
+        self.gui._update_detail_area()
+        self.assertTrue(self.gui.detail_holder.winfo_ismapped())
+        self.assertEqual(self.gui.btn_detail_toggle["text"], "收起")
+        self.gui._toggle_detail()
+        self.assertEqual(self.gui.btn_detail_toggle["text"], "展开")
+
+        self.gui.manager.states = []
+        self.gui._update_detail_area()
+        self.assertFalse(self.gui.detail_holder.winfo_ismapped(),
+                         "错误消除后应自动收起")
+
+    def test_command_logged_on_start_and_redacted(self):
+        """启动时把等效命令行写进运行日志，口令脱敏。"""
+        with tempfile.TemporaryDirectory() as td:
+            self.gui.v_path.set(td)
+            self.gui.v_port.set(str(find_free_port(5300)))
+            self.gui.bindlist.set_selection(["127.0.0.1"])
+            self.gui.v_auth_user.set("alice")
+            self.gui.v_auth_pass.set("s3cret")
+            logs, started = [], []
+            orig_log = self.gui._log
+            orig_start = self.gui.manager.start
+
+            def fake_start(*_a, **_kw):
+                started.append(True)
+                self.gui.manager.states = []
+                return "汇总"
+
+            self.gui._log = logs.append
+            self.gui.manager.start = fake_start
+            try:
+                with mock.patch.object(dufsbin, "ensure_dufs",
+                                       return_value=Path(sys.executable)):
+                    self.gui._start()
+            finally:
+                self.gui._log = orig_log
+                self.gui.manager.start = orig_start
+                self.gui.v_auth_user.set("")
+                self.gui.v_auth_pass.set("")
+                self.gui.manager.states = []
+
+            joined = "\n".join(logs)
+            self.assertTrue(started)
+            self.assertIn("[命令]", joined)
+            self.assertIn("alice:***@/:rw", joined)
+            self.assertNotIn("s3cret", joined, "日志不得泄露明文口令")
+
+    def test_qr_payload_matches_shared_url(self):
+        url = "http://192.168.1.5:5000/files/"
+        win = app_module.dialogs.build_qr_window(self.gui, url)
+        try:
+            self.assertEqual(win.qr_payload, url)
+            self.assertEqual(len(win.qr_matrix), 25)
+            self.assertEqual(len(win.qr_matrix[0]), 25)
+            self.assertEqual(win.qr_link.get(), url)
+        finally:
+            win.destroy()
+
+
 
 
 class SkinFallbackPersistenceTest(unittest.TestCase):

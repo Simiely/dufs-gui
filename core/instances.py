@@ -70,12 +70,14 @@ class InstanceManager:
         if total == 0:
             return "未启动"
         running = len(self.running_states)
+        failed = self.failed_states()
         if running == total:
             return f"运行中 · {total} 个地址"
+        # 失败数量放在状态栏做摘要，具体原因在失败详情区，避免两处重复长文案
+        suffix = f" · {len(failed)} 个失败" if failed else ""
         if running:
-            return f"{total} 个中 {running} 个已启动"
-        failed = [s for s in self.states if s.status == "失败"]
-        return "启动失败" if failed else "未启动"
+            return f"{total} 个中 {running} 个已启动{suffix}"
+        return f"启动失败{suffix}" if failed else "未启动"
 
     def failed_states(self) -> list[InstanceState]:
         return [s for s in self.states if s.status == "失败"]
@@ -202,8 +204,11 @@ class InstanceManager:
             if st.process is not None:
                 st.process.stop()
                 st.process = None
-            if st.status in ("运行中", "启动中", "无响应"):
+            # 主动停止即结束本轮状态：失败项也归「已停止」，否则界面会一直
+            # 挂着上一轮的失败详情，看起来像当前仍出错。
+            if st.status != "未启动":
                 st.status = "已停止"
+            st.detail = ""
         if self._job is not None:
             # 关闭共享 Job：即使个别 terminate 失败，内核也会结束作业内所有进程
             self._job.close()

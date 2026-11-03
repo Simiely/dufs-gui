@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 
-from core.config import ServerConfig
+from core.config import DEFAULT_WINDOW_TITLE, ServerConfig
 
 
 class FormStateMixin:
@@ -42,6 +42,10 @@ class FormStateMixin:
         self.v_profile = tk.StringVar(value="")
         self.v_status = tk.StringVar(value="未启动")
         self.v_url = tk.StringVar(value="—")
+        #: 标题显示值（窗口标题 + 顶部标题共用）；空配置时回落 DEFAULT_WINDOW_TITLE
+        self.v_app_title = tk.StringVar(value=DEFAULT_WINDOW_TITLE)
+        #: 高级设置里编辑的原始标题（空串 = 使用默认标题）
+        self.v_window_title = tk.StringVar(value="")
 
         for v in (self.v_path, self.v_port, self.v_prefix, self.v_hidden,
                   self.v_render, self.v_logpath, self.v_cert, self.v_key, self.v_profile,

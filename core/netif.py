@@ -31,6 +31,17 @@ _KIND_NAMES = {
     "wildcard": "所有网卡",
 }
 
+#: 网卡类型图标（emoji）。选择依据：语义直接、Segoe UI Emoji 覆盖稳定。
+_KIND_ICONS = {
+    "ethernet": "🔌",     # 有线：插头
+    "wifi": "📶",         # 无线信号格
+    "vpn": "🔒",          # 加密隧道
+    "virtual": "🧩",      # 虚拟/叠加组件
+    "other": "🔗",
+    "loopback": "🔁",     # 本机回环
+    "wildcard": "🌐",     # 所有网卡
+}
+
 _VPN_HINTS = (
     "vpn", "tap-windows", "tap adapter", "tunnel", "wireguard", "tailscale",
     "zerotier", "openvpn", "forticlient", "sangfor", "easyconnect", "pptp",
@@ -86,6 +97,11 @@ class NetIf:
         if not self.address:
             return "无地址（不可用）"
         return "已连接" if self.is_up else "未连接（不可用）"
+
+    @property
+    def icon(self) -> str:
+        """语义图标：以太网/无线/虚拟/回环/通配各自不同。"""
+        return _KIND_ICONS.get(self.kind, _KIND_ICONS["other"])
 
     @property
     def label(self) -> str:

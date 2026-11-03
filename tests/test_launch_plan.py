@@ -45,6 +45,17 @@ class MultiLaunchPlanTest(unittest.TestCase):
         self.assertEqual({p.url for p in group.plans},
                          {"http://192.168.1.5:5000/", "http://10.0.0.7:5000/"})
 
+    def test_plan_command_line_redacted(self):
+        """日志里展示的等效命令：绑定地址正确、口令脱敏。"""
+        cfg = ServerConfig(share_path=str(self.share), port=5000,
+                           binds=["192.168.1.5"], auth_user="alice",
+                           auth_pass="s3cret")
+        plan = build_launch_plan(cfg, binary="dufs.exe", diagnose_skin=False)
+        self.assertIn("dufs.exe", plan.command)
+        self.assertIn("192.168.1.5", plan.command)
+        self.assertIn("alice:***@/:rw", plan.command)
+        self.assertNotIn("s3cret", plan.command)
+
     def test_summary_reports_partial_failure(self):
         self.assertEqual(summarize_start_results(
             [("10.0.0.7", True, ""), ("192.168.1.5", False, "端口 5000 已被占用")]),

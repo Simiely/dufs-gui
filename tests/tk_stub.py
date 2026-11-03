@@ -72,6 +72,9 @@ class Widget:
     def grid_forget(self):
         self._mapped = False
 
+    def grid_remove(self):
+        self._mapped = False
+
     def columnconfigure(self, *_a, **_kw):
         pass
 
@@ -85,6 +88,12 @@ class Widget:
         pass
 
     def focus_set(self):
+        pass
+
+    def insert(self, *_a, **_kw):
+        pass
+
+    def delete(self, *_a, **_kw):
         pass
 
     def destroy(self):
@@ -214,6 +223,30 @@ class PhotoImage:
         pass
 
 
+class Entry(Widget):
+    """tk.Entry / ttk.Entry 桩：记录文本，get() 返回实际内容。"""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._text = ""
+        self._var = kw.get("textvariable")
+
+    def insert(self, _index, text):
+        self._text = text
+        if self._var is not None:
+            self._var.set(text)
+
+    def delete(self, *_a):
+        self._text = ""
+        if self._var is not None:
+            self._var.set("")
+
+    def get(self):
+        if self._var is not None:
+            return self._var.get()
+        return self._text
+
+
 class Checkbutton(Widget):
     """tk.Checkbutton 桩。"""
 
@@ -241,6 +274,12 @@ class Canvas(Widget):
     def create_window(self, pos, window=None, anchor="nw"):
         self._items[1] = window
         return 1
+
+    def create_rectangle(self, *a, **kw):
+        return 1
+
+    def delete(self, *_a):
+        pass
 
     def itemconfigure(self, iid, **kw):
         return None
@@ -408,7 +447,7 @@ def install() -> None:
     tk.Label = Widget
     tk.Message = Widget
     tk.Button = Widget
-    tk.Entry = Widget
+    tk.Entry = Entry
     tk.Text = Text
     tk.StringVar = StringVar
     tk.IntVar = IntVar
@@ -423,6 +462,7 @@ def install() -> None:
                  "Treeview"):
         setattr(ttk, name, Widget)
     ttk.Scrollbar = Scrollbar
+    ttk.Entry = Entry
     ttk.Style = Style
 
     scrolled = types.ModuleType("tkinter.scrolledtext")

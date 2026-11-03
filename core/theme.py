@@ -348,6 +348,27 @@ def apply_theme(root: tk.Misc) -> dict[str, str]:
               bordercolor=[("active", c["danger_hover"]),
                            ("disabled", c["border"])])
 
+    # 顶部工具条按钮：与 32px 控件同高（10pt 字体 + 上下 7px 内边距）
+    style.configure("ToolbarAccent.TButton", background=c["accent"],
+                    foreground=c["accent_fg"], bordercolor=c["accent"],
+                    lightcolor=c["accent"], darkcolor=c["accent"], padding=(16, 7))
+    style.map("ToolbarAccent.TButton",
+              background=[("active", c["accent_hover"]),
+                          ("pressed", c["accent_press"]),
+                          ("disabled", c["border"])],
+              bordercolor=[("active", c["accent_hover"]),
+                           ("pressed", c["accent_press"]),
+                           ("disabled", c["border"])])
+    style.configure("ToolbarDanger.TButton", background=c["danger"],
+                    foreground="#ffffff", bordercolor=c["danger"],
+                    lightcolor=c["danger"], darkcolor=c["danger"], padding=(16, 7))
+    style.map("ToolbarDanger.TButton",
+              background=[("active", c["danger_hover"]),
+                          ("pressed", c["danger"]),
+                          ("disabled", c["border"])],
+              bordercolor=[("active", c["danger_hover"]),
+                           ("disabled", c["border"])])
+
     style.configure("TProgressbar", background=c["accent"], troughcolor=c["well"],
                     bordercolor=c["border"], lightcolor=c["accent"],
                     darkcolor=c["accent"], thickness=10)
@@ -415,20 +436,25 @@ def apply_theme(root: tk.Misc) -> dict[str, str]:
 
 
 def enable_windows_dark_titlebar(hwnd: int) -> None:
-    """Windows 10/11：让标题栏跟随深色（失败静默忽略）。"""
+    """Windows 10/11：让标题栏跟随深色（失败静默忽略）。
+
+    Tk 的 ``winfo_id()`` 给的是子窗口句柄，DWM 属性必须设到顶层窗口上；
+    这里统一用 GetAncestor(GA_ROOT) 找真正的标题栏窗口。属性号在不同
+    Windows 版本间有差异（19/20），两个都尝试一次。
+    """
     try:
         import ctypes
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        root = user32.GetAncestor(hwnd, 2) or hwnd
         value = ctypes.c_int(1)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(  # type: ignore[attr-defined]
-            hwnd, 20 if _win11_dark_attr_supported() else 19,
-            ctypes.byref(value), ctypes.sizeof(value))
+        for attr in (20, 19):
+            try:
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(  # type: ignore[attr-defined]
+                    root, attr, ctypes.byref(value), ctypes.sizeof(value))
+            except Exception:
+                pass
     except Exception:
         pass
 
 
-def _win11_dark_attr_supported() -> bool:
-    try:
-        import sys
-        return sys.getwindowsversion().build >= 18362  # type: ignore[attr-defined]
-    except Exception:
-        return True
+

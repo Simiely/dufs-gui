@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import socket
@@ -32,8 +33,10 @@ def ui_source() -> str:
 import core as core_pkg  # noqa: E402
 from core import crashlog, dufsbin, server  # noqa: E402
 from core.dufsbin import verify_assets_dir, webui_dir  # noqa: E402
-from core.config import (AppConfig, ServerConfig, is_loopback_bind,  # noqa: E402
-                         load_config, normalize_prefix, save_config)
+from core.config import (CONFIG_VERSION, DEFAULT_WINDOW_TITLE,
+                         MAX_WINDOW_TITLE_LEN, AppConfig, ServerConfig,
+                         check_window_title, is_loopback_bind, load_config,
+                         normalize_prefix, save_config)
 from core.netutil import find_free_port, port_in_use  # noqa: E402
 from core.launch import build_launch_plan  # noqa: E402
 
@@ -215,6 +218,45 @@ class ConfigTest(unittest.TestCase):
             back = load_config(p)
             self.assertEqual(back.recent_paths, ["/a"])
             self.assertEqual(back.profiles["x"]["port"], 1)
+
+    def test_window_title_roundtrip_and_default(self):
+        """标题写入配置后可读回；空串回落默认标题，不升 schema。"""
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "config.json"
+            save_config(AppConfig(window_title="实验室共享"), p)
+            back = load_config(p)
+            self.assertEqual(back.window_title, "实验室共享")
+            self.assertEqual(back.effective_window_title(), "实验室共享")
+            self.assertEqual(back.config_version, CONFIG_VERSION)
+
+            save_config(AppConfig(window_title=""), p)
+            back = load_config(p)
+            self.assertEqual(back.window_title, "")
+            self.assertEqual(back.effective_window_title(), DEFAULT_WINDOW_TITLE)
+
+    def test_window_title_validation(self):
+        """空值可用（默认标题）；控制字符与超长必须拒绝。"""
+        self.assertEqual(check_window_title("   "), (True, ""))
+        self.assertEqual(check_window_title("  Dufs  ") , (True, "Dufs"))
+        ok, msg = check_window_title("bad\x00title")
+        self.assertFalse(ok)
+        self.assertIn("控制字符", msg)
+        ok, msg = check_window_title("x" * (MAX_WINDOW_TITLE_LEN + 1))
+        self.assertFalse(ok)
+        self.assertIn("最长", msg)
+        self.assertTrue(check_window_title("x" * MAX_WINDOW_TITLE_LEN)[0])
+
+    def test_old_config_without_title_loads_default(self):
+        """旧配置没有 window_title 字段：按默认值读取，无需迁移版本。"""
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "config.json"
+            p.write_text(json.dumps({"profiles": {},
+                                     "current_config": {"share_path": "/tmp"}},
+                                    ensure_ascii=False), encoding="utf-8")
+            cfg = load_config(p)
+            self.assertEqual(cfg.window_title, "")
+            self.assertEqual(cfg.effective_window_title(), DEFAULT_WINDOW_TITLE)
+            self.assertEqual(cfg.config_version, CONFIG_VERSION)
 
 
 class AuthConfigTest(unittest.TestCase):

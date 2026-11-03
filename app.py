@@ -11,12 +11,12 @@ import time
 import tkinter as tk
 import webbrowser
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, ttk
 
 from core import APP_VERSION  # 单一真源，见 core/__init__.py
 from core import dufsbin
-from core.config import (AppConfig, ServerConfig, config_file, load_config,
-                         save_config)
+from core.config import (AppConfig, ServerConfig, check_window_title, config_file,
+                         load_config, save_config)
 from core.health import HealthMonitor
 from core.instances import InstanceManager
 from core.launch import build_launch_plans
@@ -24,9 +24,10 @@ from core.netif import apply_saved, list_interfaces
 from core.netutil import find_free_port, port_in_use
 from core.runtime import DufsRuntime
 from core.theme import DARK, apply_theme, enable_windows_dark_titlebar
+from ui import dialog as dialogs
 from ui.advanced import AdvancedDialogMixin
 from ui.bindlist import BindCheckList
-from ui.common import APP_NAME
+from ui.common import emoji_font
 from ui.form import FormStateMixin
 from ui.layout import MainLayoutMixin
 
@@ -50,11 +51,11 @@ _IDLE = _IdleProcess()
 class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title(f"{APP_NAME}  v{APP_VERSION}")
+        self.app_cfg: AppConfig = load_config()
+        self.title(self.app_cfg.effective_window_title())
         self.geometry("1040x780")
         self.minsize(960, 720)
 
-        self.app_cfg: AppConfig = load_config()
         self.colors: dict[str, str] = dict(DARK)
 
         self.log_queue: queue.Queue = queue.Queue()
@@ -69,8 +70,11 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         self._build_vars()
         self._build_ui()
         self._apply_theme()
+        self._apply_window_title()
         self._restore()
         self._refresh_preview()
+        # 窗口真正映射后再设一次 DWM 深色标题栏（部分系统在 map 前设置不生效）
+        self.after(250, lambda: enable_windows_dark_titlebar(self.winfo_id()))
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(150, self._drain_queues)
@@ -94,7 +98,7 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
             path = crashlog.write_report("界面回调异常", text)
             self._log(f"界面出错：{val}（详情见 {path}）")
             try:
-                messagebox.showerror("出错了", f"{val}\n\n完整日志：\n{path}")
+                dialogs.show_error(self, "出错了", f"{val}\n\n完整日志：\n{path}")
             except Exception:
                 pass
         except Exception:
@@ -149,6 +153,42 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
                  "warn": self.colors["warn"]}.get(kind, self.colors["muted"])
         self.dot.configure(fg=color, bg=self.colors["panel"])
 
+    # ---------------- 窗口标题 ----------------
+    def _apply_window_title(self) -> None:
+        """窗口标题 / 任务栏名称 / 顶部标题统一取自配置（空值回落默认）。"""
+        title = self.app_cfg.effective_window_title()
+        try:
+            self.title(title)
+        except Exception:
+            pass
+        try:
+            self.v_app_title.set(title)
+        except Exception:
+            pass
+
+    def _apply_window_title_setting(self) -> None:
+        """高级设置里的「应用」：校验 → 落盘 → 立即生效。"""
+        ok, msg = check_window_title(self.v_window_title.get())
+        if not ok:
+            self._set_title_hint(msg, error=True)
+            return
+        self.app_cfg.window_title = msg
+        self._apply_window_title()
+        self._save()
+        if msg:
+            self._set_title_hint(f"已应用：{msg}")
+        else:
+            self._set_title_hint("已恢复默认标题（Dufs GUI）")
+        self._log(f"窗口标题已更新：{self.app_cfg.effective_window_title()}")
+
+    def _set_title_hint(self, text: str, error: bool = False) -> None:
+        try:
+            self.lbl_title_hint.configure(
+                text=text, foreground=self.colors["danger"] if error
+                else self.colors["muted"])
+        except Exception:
+            pass
+
     # ---------------- 配置交互 ----------------
     def _browse_dir(self) -> None:
         initial = self.v_path.get() or str(Path.home())
@@ -187,22 +227,22 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
     def _check_port(self) -> None:
         port, err = self.port_from_form()
         if err:
-            messagebox.showwarning("端口无效", err)
+            dialogs.show_warning(self, "端口无效", err)
             return
         cfg = self.current_config()
         binds = cfg.effective_binds()
         if not binds:
-            messagebox.showwarning("未选择网卡", "请先勾选至少一个共享网卡。")
+            dialogs.show_warning(self, "未选择网卡", "请先勾选至少一个共享网卡。")
             return
         occupied = [b for b in binds if port_in_use(port, cfg.check_host(b))]
         if not occupied:
-            messagebox.showinfo("端口可用", f"端口 {port} 在所有已选地址上均可用")
+            dialogs.show_info(self, "端口可用", f"端口 {port} 在所有已选地址上均可用")
             return
         free = find_free_port(port, cfg.check_host(occupied[0]))
-        if messagebox.askyesno("端口已被占用",
-                               f"端口 {port} 在以下地址上已被占用：\n"
-                               + "\n".join(occupied)
-                               + f"\n\n是否改用 {free}？"):
+        if dialogs.ask_yes_no(self, "端口已被占用",
+                              f"端口 {port} 在以下地址上已被占用：\n"
+                              + "\n".join(occupied)
+                              + f"\n\n是否改用 {free}？", ok_text="改用"):
             self.v_port.set(str(free))
             self._log(f"端口 {port} 被占用，已切换到 {free}")
 
@@ -230,7 +270,7 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
             return
         ok, msg = dufsbin.validate_assets_dir(d)
         if not ok:
-            messagebox.showerror("皮肤目录无效", msg)
+            dialogs.show_error(self, "皮肤目录无效", msg)
             return
         self.v_assets_dir.set(d)
 
@@ -243,14 +283,13 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         try:
             info = self.runtime.adopt(p)
         except OSError as e:
-            messagebox.showerror("无法使用", str(e))
+            dialogs.show_error(self, "无法使用", str(e))
             return
         self.v_dufs.set(str(info.path))
         self._log(f"已更换 dufs：{info.path}")
 
     def _refresh_preview(self) -> None:
         cfg = self.current_config()
-        self.lbl_cmd.configure(text="等效命令：" + cfg.command_line())
         if not self.manager.running:
             binds = cfg.effective_binds()
             if binds and cfg.share_path:
@@ -265,8 +304,8 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         self.v_profile.set(select if select in names else "")
 
     def _save_profile(self) -> None:
-        name = simpledialog.askstring("保存方案", "给这套配置起个名字：",
-                                      initialvalue=self.v_profile.get() or "")
+        name = dialogs.ask_string(self, "保存方案", "给这套配置起个名字：",
+                                  initial=self.v_profile.get() or "", max_len=40)
         if not name:
             return
         self.app_cfg.profiles[name] = self.current_config().to_dict()
@@ -291,7 +330,8 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
 
     def _delete_profile(self) -> None:
         name = self.v_profile.get()
-        if name and messagebox.askyesno("删除方案", f"确定删除方案「{name}」？"):
+        if name and dialogs.ask_yes_no(self, "删除方案", f"确定删除方案「{name}」？",
+                                       ok_text="删除", destructive=True):
             self.app_cfg.profiles.pop(name, None)
             self._reload_profiles()
             self._save()
@@ -367,15 +407,16 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         if port_err:
             errs.insert(0, port_err)
         if errs:
-            messagebox.showerror("配置有误", "\n".join(errs))
+            dialogs.show_error(self, "配置有误", "\n".join(errs))
             return
         if group.auth_log:
             self._log(group.auth_log)
 
         info = self.runtime.ensure()
         if info is None:
-            if messagebox.askyesno("缺少 dufs",
-                                   "没有找到 dufs 可执行文件。\n是否手动选择 dufs.exe？"):
+            if dialogs.ask_yes_no(self, "缺少 dufs",
+                                  "没有找到 dufs 可执行文件。\n是否手动选择 dufs.exe？",
+                                  ok_text="选择"):
                 p = filedialog.askopenfilename(title="选择 dufs.exe")
                 if not p:
                     return
@@ -390,9 +431,14 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         for line in group.skin_logs:
             self._log(line)
 
-        if cfg.allow_symlink and not messagebox.askyesno(
-                "安全提示", "允许符号链接可能暴露共享目录之外的文件，确定开启？"):
+        if cfg.allow_symlink and not dialogs.ask_yes_no(
+                self, "安全提示", "允许符号链接可能暴露共享目录之外的文件，确定开启？",
+                ok_text="仍然开启"):
             return
+
+        # 等效命令行改为日志：每个绑定地址一行，便于复制排查；口令已脱敏
+        for plan in group.plans:
+            self._log(f"[命令] {plan.bind}:{plan.port}  {plan.command}")
 
         self._stop_health()
         summary = self.manager.start(
@@ -404,18 +450,16 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         if running == 0:
             self.v_status.set("启动失败")
             self._set_status_color("err")
-            self.btn_detail.configure(state="normal")
             self.btn_start.configure(state="normal")
             self.btn_stop.configure(state="disabled")
             self._set_config_enabled(True)
             self._log(summary)
             self._log(self.manager.failures_text())
+            self._update_detail_area(force_expand=True)
             return
 
         self.v_status.set(self.manager.status_text)
         self._set_status_color("run" if running == total else "warn")
-        self.btn_detail.configure(
-            state="normal" if self.manager.failed_states() else "disabled")
         self._set_config_enabled(False)
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
@@ -428,6 +472,7 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         if self.manager.failed_states():
             self._log(summary)
             self._log(self.manager.failures_text())
+        self._update_detail_area()
 
         self._start_health(cfg)
         if self.adv_win is not None:
@@ -471,7 +516,7 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         self._set_config_enabled(True)
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
-        self.btn_detail.configure(state="disabled")
+        self._update_detail_area()
         if not silent:
             self._log("已停止服务")
             self._refresh_preview()
@@ -500,6 +545,8 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
 
         colors = {"运行中": self.colors["ok"], "启动中": self.colors["warn"],
                   "无响应": self.colors["warn"], "失败": self.colors["danger"]}
+        icons = {item.address: item.icon for item in self.bindlist.items
+                 if item.address}
         for i, st in enumerate(states):
             row = tk.Frame(host, bg=self.colors["panel"])
             row.grid(row=i, column=0, sticky="ew", pady=(0, 2))
@@ -508,16 +555,21 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
                      fg=colors.get(st.status, self.colors["muted"]),
                      font=("Microsoft YaHei UI", 8)).grid(row=0, column=0,
                                                           padx=(0, 6))
+            tk.Label(row, text=icons.get(st.bind, "🔗"), bg=self.colors["panel"],
+                     fg=self.colors["fg"], font=emoji_font(10), width=2).grid(
+                row=0, column=1, sticky="w")
             tk.Label(row, text=f"{st.display} · {st.bind}", bg=self.colors["panel"],
                      fg=self.colors["fg"], font=("Microsoft YaHei UI", 9),
-                     anchor="w").grid(row=0, column=1, sticky="w")
-            tk.Label(row, text=st.detail or st.status, bg=self.colors["panel"],
+                     anchor="w").grid(row=0, column=2, sticky="w")
+            # 失败原因只在下方「失败详情」里写一次；列表右侧仅回状态，避免重复长文案
+            detail_text = "失败" if st.status == "失败" else (st.detail or st.status)
+            tk.Label(row, text=detail_text, bg=self.colors["panel"],
                      fg=colors.get(st.status, self.colors["muted"]),
                      font=("Microsoft YaHei UI", 9), anchor="e").grid(
                 row=0, column=3, sticky="e", padx=(8, 0))
             tk.Label(row, text=st.url, bg=self.colors["panel"],
                      fg=self.colors["muted"], font=("Consolas", 8),
-                     anchor="w").grid(row=1, column=1, columnspan=3,
+                     anchor="w").grid(row=1, column=2, columnspan=2,
                                       sticky="ew", pady=(0, 4))
         urls = [st.url for st in states if st.running]
         self.v_url.set("  ".join(urls) if urls else "—")
@@ -527,10 +579,25 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         running = self.manager.running_states
         if not running:
             self._log("服务未运行，请先开启共享")
-            messagebox.showinfo("服务未运行", "请先开启共享，再打开网页。")
+            dialogs.show_info(self, "服务未运行", "请先开启共享，再打开网页。")
             return
         url = running[0].url + "#" + str(int(time.time()))
         webbrowser.open(url)
+
+    def _open_qr(self) -> None:
+        """二维码内容必须与实际共享地址一致：优先取运行中的地址。"""
+        urls = [st.url for st in self.manager.running_states if st.url]
+        url = urls[0] if urls else ""
+        if not url:
+            cfg = self.current_config()
+            if cfg.effective_binds() and cfg.share_path:
+                url = cfg.url()
+        if not url:
+            self.v_status.set("没有可生成二维码的共享地址")
+            self._set_status_color("warn")
+            self._log("未选择网卡或共享目录，无法生成二维码")
+            return
+        dialogs.show_qr(self, url)
 
     def _copy_url(self) -> None:
         urls = [st.url for st in self.manager.running_states]
@@ -541,8 +608,47 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         self.clipboard_append(text)
         self._log(f"已复制：{text}")
 
-    def _show_failures(self) -> None:
-        messagebox.showinfo("启动失败详情", self.manager.failures_text())
+    # ---------------- 失败详情（有错误才出现） ----------------
+    def _toggle_detail(self) -> None:
+        self.detail_expanded = not self.detail_expanded
+        self._render_detail_body()
+
+    def _render_detail_body(self) -> None:
+        try:
+            if self.detail_expanded:
+                self.detail_body.grid()
+                self.btn_detail_toggle.configure(text="收起")
+            else:
+                self.detail_body.grid_remove()
+                self.btn_detail_toggle.configure(text="展开")
+        except Exception:
+            pass
+
+    def _update_detail_area(self, force_expand: bool = False) -> None:
+        """无失败 → 整块收起（不占空白）；有失败 → 显示并可展开。"""
+        failed = self.manager.failed_states()
+        if not failed:
+            try:
+                self.detail_holder.grid_remove()
+                self.detail_text.configure(state="normal")
+                self.detail_text.delete("1.0", "end")
+                self.detail_text.configure(state="disabled")
+            except Exception:
+                pass
+            return
+        text = self.manager.failures_text()
+        try:
+            self.lbl_detail_title.configure(text=f"启动失败详情（{len(failed)} 项）")
+            self.detail_text.configure(state="normal")
+            self.detail_text.delete("1.0", "end")
+            self.detail_text.insert("1.0", text)
+            self.detail_text.configure(state="disabled")
+            if force_expand:
+                self.detail_expanded = True
+            self.detail_holder.grid()
+            self._render_detail_body()
+        except Exception:
+            pass
 
     # ---------------- 日志 ----------------
     def _log(self, line: str) -> None:
@@ -566,7 +672,7 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         try:
             Path(p).write_text(content, encoding="utf-8")
         except OSError as e:
-            messagebox.showerror("导出失败", f"{e}\n\n路径：{p}")
+            dialogs.show_error(self, "导出失败", f"{e}\n\n路径：{p}")
             self._log(f"日志导出失败：{e}")
             return
         self._log(f"日志已导出：{p}")
@@ -617,28 +723,42 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
             return
         if state.process is not None and state.process.running:
             return
-        state.status = "已退出"
-        state.detail = "进程已退出"
+        # 「启动中」交给 wait_ready 定性；「已停止」是用户主动停止，不要改写。
+        # 只有曾经运行过的实例意外退出才标成「已退出」；启动失败要保留失败原因，
+        # 否则失败详情区会因为状态被覆盖而消失。
+        if state.status in ("启动中", "已停止"):
+            return
+        if state.status == "失败":
+            state.detail = state.detail or "进程已退出"
+        else:
+            state.status = "已退出"
+            state.detail = "进程已退出"
         self._render_status_rows()
         if not self.manager.running:
             self._stop_health()
-            self.v_status.set("已退出")
-            self._set_status_color("warn")
+            if self.manager.failed_states():
+                self.v_status.set(self.manager.status_text)
+                self._set_status_color("err")
+            else:
+                self.v_status.set("已退出")
+                self._set_status_color("warn")
             self.btn_start.configure(state="normal")
             self.btn_stop.configure(state="disabled")
-            self.btn_detail.configure(
-                state="normal" if self.manager.failed_states() else "disabled")
             self._set_config_enabled(True)
+            self._update_detail_area()
             self._refresh_preview()
             self._log("dufs 进程已退出")
         else:
             self.v_status.set(self.manager.status_text)
             self._set_status_color("warn")
+            self._update_detail_area()
             self._log(f"[{state.display}] dufs 进程已退出，其余地址仍在运行")
 
     def on_close(self) -> None:
         if self.manager.running:
-            if not messagebox.askyesno("退出", "服务正在运行，退出将停止共享，确定吗？"):
+            if not dialogs.ask_yes_no(self, "退出",
+                                      "服务正在运行，退出将停止共享，确定吗？",
+                                      ok_text="退出", destructive=True):
                 return
         self.manager.stop()
         self._stop_health()

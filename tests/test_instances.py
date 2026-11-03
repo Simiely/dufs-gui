@@ -94,7 +94,7 @@ class InstanceManagerTest(unittest.TestCase):
         self.assertIn("2 个中 1 个已启动", summary)
         self.assertIn("10.4.240.16", summary)
         self.assertIn("模拟启动错误", summary)
-        self.assertEqual(manager.status_text, "2 个中 1 个已启动")
+        self.assertEqual(manager.status_text, "2 个中 1 个已启动 · 1 个失败")
         self.assertTrue(manager.failed_states())
 
     def test_occupied_port_only_skips_that_address(self):
@@ -118,8 +118,13 @@ class InstanceManagerTest(unittest.TestCase):
                     {"fail_binds": {"127.0.0.1", "10.4.240.16"}})
         manager = self._manager(fake)
         summary = manager.start(sys.executable, self.group.plans, self.labels)
-        self.assertEqual(manager.status_text, "启动失败")
+        self.assertEqual(manager.status_text, "启动失败 · 2 个失败")
         self.assertIn("全部启动失败", summary)
+
+        # 主动停止后失败状态清空，界面据此收起失败详情区
+        manager.stop()
+        self.assertEqual(manager.failed_states(), [])
+        self.assertEqual({s.status for s in manager.states}, {"已停止"})
 
 
 if __name__ == "__main__":

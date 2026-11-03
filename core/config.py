@@ -16,6 +16,27 @@ from .netutil import normalize_prefix
 #: 配置文件 schema 版本。v1 = 无版本号的旧配置；v2 = 增加版本号并规范化字段。
 CONFIG_VERSION = 2
 
+#: 窗口标题默认值与上限。新增字段不升 schema：旧配置没有该字段时按默认值读取。
+DEFAULT_WINDOW_TITLE = "Dufs GUI"
+MAX_WINDOW_TITLE_LEN = 48
+
+
+def sanitize_window_title(value: str) -> str:
+    """去掉控制字符与首尾空白；空串表示使用默认标题。"""
+    cleaned = "".join(ch for ch in str(value) if ch >= " " and ch != "\x7f")
+    return cleaned.strip()
+
+
+def check_window_title(value: str) -> tuple[bool, str]:
+    """校验用户输入的窗口标题，返回 ``(是否可用, 清理后的值或错误说明)``。"""
+    raw = str(value or "")
+    if any(ch < " " or ch == "\x7f" for ch in raw):
+        return False, "窗口标题不能包含控制字符"
+    clean = sanitize_window_title(raw)
+    if len(clean) > MAX_WINDOW_TITLE_LEN:
+        return False, f"窗口标题最长 {MAX_WINDOW_TITLE_LEN} 个字符"
+    return True, clean
+
 RENDER_MODES = {
     "自动列表（默认）": "",
     "静态站点 index.html": "--render-index",
@@ -154,13 +175,13 @@ class ServerConfig:
 
         return args
 
-    def redacted_args(self) -> list[str]:
+    def redacted_args(self, bind: str | None = None) -> list[str]:
         """返回脱敏后的参数，供界面预览 / 日志使用（口令替换为 ***）。
 
         不能简单用 args.index("-a")：共享目录名也可能叫 "-a"，按位置替换会
         漏掉真正的口令。这里只替换"看起来像 user:pass"的 -a 参数值。
         """
-        args = self.to_args()
+        args = self.to_args(bind)
         for i in range(len(args) - 1):
             if args[i] == "-a" and ":" in args[i + 1]:
                 head, sep, tail = args[i + 1].partition("@")
@@ -168,11 +189,11 @@ class ServerConfig:
                 args[i + 1] = f"{user}:***" + (sep + tail if sep else "")
         return args
 
-    def command_line(self, binary: str = "dufs") -> str:
+    def command_line(self, binary: str = "dufs", bind: str | None = None) -> str:
         """生成可直接复制到终端的等价命令（便于学习与排错，口令已脱敏）。"""
         def q(v: str) -> str:
             return f'"{v}"' if (" " in v or v == "") else v
-        return " ".join([q(binary)] + [q(a) for a in self.redacted_args()])
+        return " ".join([q(binary)] + [q(a) for a in self.redacted_args(bind)])
 
     # ---------- 展示 ----------
     @property
@@ -355,9 +376,15 @@ class AppConfig:
     current: str = ""
     recent_paths: list[str] = field(default_factory=list)
     current_config: dict[str, Any] = field(default_factory=dict)
+    #: 自定义窗口标题（同时决定任务栏名称）；空串表示使用 DEFAULT_WINDOW_TITLE。
+    #: 与 schema 版本无关：旧配置没有该字段时按默认值读取，不需要迁移。
+    window_title: str = ""
     config_version: int = CONFIG_VERSION
     #: 载入时的告警（迁移/坏配置恢复）。不落盘，只在界面日志里提示一次。
     notice: str = field(default="", compare=False, repr=False)
+
+    def effective_window_title(self) -> str:
+        return sanitize_window_title(self.window_title) or DEFAULT_WINDOW_TITLE
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -414,11 +441,23 @@ class AppConfig:
             if raw_cc is not None:
                 notes.append("current_config 类型无效，已清空")
 
+        raw_title = data.get("window_title")
+        window_title = ""
+        if isinstance(raw_title, str):
+            ok, clean = check_window_title(raw_title)
+            if ok:
+                window_title = clean
+            else:
+                notes.append(f"窗口标题无效（{clean}），已恢复默认")
+        elif raw_title is not None:
+            notes.append("window_title 类型无效，已忽略")
+
         cfg = cls(
             profiles=profiles,
             current=current,
             recent_paths=recent,
             current_config=current_config,
+            window_title=window_title,
             config_version=CONFIG_VERSION,
         )
         cfg.notice = "；".join(notes)

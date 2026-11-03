@@ -34,6 +34,8 @@ class LaunchPlan:
     #: 该计划对应的监听地址与端口（多实例启动使用）
     bind: str = ""
     port: int = 0
+    #: 可直接复制到终端的等效命令（口令已脱敏），启动时写入运行日志
+    command: str = ""
 
     @property
     def can_start(self) -> bool:
@@ -153,6 +155,7 @@ def build_launch_plan(
         share_is_file=share_is_file,
         bind=cfg.effective_binds()[0] if cfg.effective_binds() else "",
         port=int(cfg.port),
+        command=cfg.command_line(binary=str(binary) if binary is not None else "dufs"),
     )
 
 

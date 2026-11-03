@@ -115,6 +115,20 @@ class AdvancedDialogMixin:
                 row=row, column=1, columnspan=2, sticky="w",
                 padx=(SPACE["sm"], 0), pady=(SPACE["xs"], 0))
 
+        # ---- 界面 ----
+        box = card("界面")
+        self.v_window_title.set(self.app_cfg.window_title)
+        ent_title = field(box, 1, "窗口标题", self.v_window_title)
+        ttk.Button(box, text="应用", style="Accent.TButton",
+                   command=self._apply_window_title_setting).grid(
+            row=1, column=2, padx=(SPACE["sm"], 0), pady=(SPACE["xs"], 0))
+        self.lbl_title_hint = ttk.Label(
+            box, text="留空使用默认「Dufs GUI」；最长 48 字符，应用后立即保存",
+            style="MutedCard.TLabel", font=f["caption"], justify="left")
+        self.lbl_title_hint.grid(row=2, column=1, columnspan=2, sticky="w",
+                                 padx=(SPACE["sm"], 0), pady=(SPACE["xs"], 0))
+        ent_title.bind("<Return>", lambda e: self._apply_window_title_setting())
+
         # ---- 路径前缀 ----
         box = card("路径前缀")
         field(box, 1, "URL 前缀", self.v_prefix)

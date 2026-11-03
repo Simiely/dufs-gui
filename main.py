@@ -18,6 +18,15 @@ crashlog.install()
 # 自检要在 import app（可能失败）之前，否则 tkinter 坏了就啥也看不到
 if "--selftest" in sys.argv:
     print(crashlog.env_report())
+    # 顺带验证二维码模块已打进冻结产物（纯标准库，不依赖 PIL）
+    try:
+        from core.qr import matrix_for, png_bytes
+
+        modules = matrix_for("http://127.0.0.1:5000/")
+        print(f"qr          : {len(modules)}x{len(modules)}，"
+              f"png {len(png_bytes(modules))} 字节")
+    except Exception as e:  # noqa: BLE001
+        print(f"qr          : 失败 -> {type(e).__name__}: {e}")
     sys.exit(0)
 
 from app import main  # noqa: E402
