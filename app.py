@@ -15,7 +15,7 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 
 from core import APP_VERSION  # 单一真源，见 core/__init__.py
-from core import dufsbin, webtweak
+from core import dufsbin, timing, webtweak
 from core.config import (AppConfig, ServerConfig, config_file, load_config,
                          save_config)
 from core.health import HealthMonitor
@@ -52,7 +52,9 @@ _IDLE = _IdleProcess()
 
 class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
     def __init__(self) -> None:
+        timing.mark("app_init")
         super().__init__()
+        timing.mark("tk_root")
         self.app_cfg: AppConfig = load_config()
         # GUI 窗口标题固定：用户可定制的是浏览器标签页标题（高级设置里）
         self.title("Dufs GUI")
@@ -71,15 +73,20 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         self.config_widgets: list[tk.Widget] = []
 
         self._build_vars()
+        timing.mark("vars_ready")
         self._build_ui()
+        timing.mark("ui_built")
         self._apply_theme()
+        timing.mark("theme_done")
         self._restore()
         self._refresh_preview()
+        timing.mark("state_restored")
         # 窗口真正映射后再设一次 DWM 深色标题栏/圆角（部分系统在 map 前设置不生效）
         self.after(250, self._apply_window_chrome)
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(150, self._drain_queues)
+        timing.mark("ui_ready")
 
     @property
     def proc(self):
@@ -866,6 +873,7 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
 
 def main() -> None:
     app = DufsGui()
+    timing.mark("mainloop")
     app.mainloop()
 
 

@@ -11,9 +11,14 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from core import timing  # noqa: E402
+
+timing.mark("script")
+
 from core import crashlog  # noqa: E402
 
 crashlog.install()
+timing.mark("crashlog")
 
 # 自检要在 import app（可能失败）之前，否则 tkinter 坏了就啥也看不到
 if "--selftest" in sys.argv:
@@ -30,6 +35,8 @@ if "--selftest" in sys.argv:
     sys.exit(0)
 
 from app import main  # noqa: E402
+
+timing.mark("imports_done")
 
 if __name__ == "__main__":
     main()
