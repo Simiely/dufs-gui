@@ -1,11 +1,15 @@
-"""深色 / 浅色主题。tkinter 无原生深色，这里用 ttk 的 clam 主题重绘配色。"""
+"""固定深色主题。tkinter 无原生深色，这里用 ttk 的 clam 主题重绘配色。
+
+应用不提供浅色模式，也不保存主题状态：所有窗口、弹窗、下拉列表与滚动条
+都只使用 DARK 一套配色。
+"""
 
 from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk
 
-# 已创建的 Combobox 实例，主题切换时需要逐个刷新下拉列表
+# 已创建的 Combobox 实例，创建/刷新时需要逐个配置下拉列表
 _COMBOS: list[ttk.Combobox] = []
 
 # ---------- 复选框：自绘指示器 ----------
@@ -82,9 +86,9 @@ class ThemedCombobox(ttk.Combobox):
             pass
 
     def refresh_popdown(self, colors: dict | None = None) -> None:
-        """直接给已经存在的 popdown Listbox 上色（切换主题时用）。"""
+        """直接给已经存在的 popdown Listbox 上色。"""
         if colors is None:
-            colors = palette(_current_dark())
+            colors = DARK
         try:
             opts = self._options(
                 background=colors["field"],
@@ -130,7 +134,7 @@ class ThemedCheckbutton(tk.Checkbutton):
             compound="left",        # 图在左、文字在右
             anchor="w",
         )
-        self.apply_colors(palette(_current_dark()))
+        self.apply_colors(DARK)
 
     def apply_colors(self, c: dict) -> None:
         bg = c.get(self._bg_key, c["bg"])
@@ -156,21 +160,12 @@ class ThemedCheckbutton(tk.Checkbutton):
 
 
 def refresh_all_checkbuttons(c: dict) -> None:
-    """主题切换后刷新所有复选框图片与配色。"""
+    """刷新所有复选框图片与配色。"""
     for w in list(ThemedCheckbutton._INSTANCES):
         try:
             w.apply_colors(c)
         except Exception:
             pass
-
-
-def _current_dark() -> bool:
-    try:
-        from .app_state import DARK  # 避免循环导入
-
-        return DARK
-    except Exception:
-        return True
 
 
 def apply_option_db(root: tk.Misc, c: dict[str, str], font) -> None:
@@ -199,50 +194,57 @@ def refresh_all_popdowns(c: dict[str, str]) -> None:
         except Exception:
             pass
 
+#: Apple macOS 深色设计 token（在 ttk 可表达范围内的近似）
+#: - 层次用背景色差：#1e1e1e 底 / #232325 面板 / #2c2c2e 控件
+#: - 强调色是深色模式系统蓝 #0a84ff；危险操作 #ff453a
+#: - 次要文字 #8e8e93；分隔线/边框 #3a3a3c（低对比，不抢层次）
 DARK = {
-    "bg": "#1b1e23",
-    "panel": "#23272e",
-    "card": "#2a2f3a",
-    "field": "#161a1f",
-    "fg": "#e6e8ec",
-    "muted": "#9aa4b2",
-    "border": "#333a45",
-    "accent": "#4f9cf9",
+    "bg": "#1e1e1e",
+    "panel": "#232325",
+    "card": "#2c2c2e",
+    "field": "#2c2c2e",
+    "well": "#1a1a1c",
+    "fg": "#f2f2f7",
+    "muted": "#8e8e93",
+    "border": "#3a3a3c",
+    "sel": "#3a3a3c",
+    "accent": "#0a84ff",
+    "accent_hover": "#0077ed",
+    "accent_press": "#0060df",
     "accent_fg": "#ffffff",
-    # 选中态方框填充：与白勾对比度 4.63:1（原 #4f9cf9 只有 2.82:1，勾看不清）
-    "check_on": "#1f6feb",
-    # 未选中方框描边：与面板底色 #23272e 对比度 5.0:1（原 #333a45 仅 1.31:1，等于隐形）
-    "check_border": "#8b96a5",
-    "ok": "#3fb950",
-    "warn": "#d9a441",
-    "danger": "#e05c5c",
+    # 选中态方框填充：白勾与 #0a84ff 对比度 > 3:1
+    "check_on": "#0a84ff",
+    # 未选中方框描边：与面板 #232325 对比度 > 5:1
+    "check_border": "#8e8e93",
+    "ok": "#30d158",
+    "warn": "#ffd60a",
+    "danger": "#ff453a",
+    "danger_hover": "#ff6961",
 }
 
-LIGHT = {
-    "bg": "#f4f6f9",
-    "panel": "#ffffff",
-    "card": "#ffffff",
-    "field": "#ffffff",
-    "fg": "#1f2328",
-    "muted": "#5b6572",
-    "border": "#d3d9e0",
-    "accent": "#2f6fdb",
-    "accent_fg": "#ffffff",
-    "check_on": "#1257c9",
-    "check_border": "#767f8c",
-    "ok": "#1f8f3d",
-    "warn": "#a86a00",
-    "danger": "#c92a2a",
-}
+#: 8pt 栅格（Tk 以像素计，8 的倍数为统一间距）
+SPACE = {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24}
+
+#: ttk/clam 没有真正的圆角；这里只作为画布类自绘的预留 token 与文档口径
+RADIUS = {"card": 12, "control": 8}
+
+_FAMILY = "Microsoft YaHei UI"
 
 
-def palette(dark: bool) -> dict[str, str]:
-    return DARK if dark else LIGHT
+def fonts() -> dict[tuple]:
+    return {
+        "title": (_FAMILY, 20, "bold"),
+        "section": (_FAMILY, 11, "bold"),
+        "body": (_FAMILY, 10),
+        "caption": (_FAMILY, 9),
+        "mono": ("Consolas", 10),
+    }
 
 
-def apply_theme(root: tk.Misc, dark: bool = True) -> dict[str, str]:
-    """应用主题到 root 及其所有 ttk 组件，返回所用配色。"""
-    c = palette(dark)
+def apply_theme(root: tk.Misc) -> dict[str, str]:
+    """把固定深色主题应用到 root 及其所有 ttk 组件，返回 DARK。"""
+    c = DARK
+    f = fonts()
     style = ttk.Style(root)
     if "clam" in style.theme_names():
         style.theme_use("clam")
@@ -251,89 +253,172 @@ def apply_theme(root: tk.Misc, dark: bool = True) -> dict[str, str]:
 
     style.configure(".", background=c["panel"], foreground=c["fg"],
                     fieldbackground=c["field"], bordercolor=c["border"],
-                    troughcolor=c["field"], insertcolor=c["fg"])
+                    troughcolor=c["well"], insertcolor=c["fg"],
+                    font=f["body"])
     style.configure("TFrame", background=c["bg"])
     style.configure("Card.TFrame", background=c["panel"], relief="flat")
-    style.configure("TLabelframe", background=c["bg"], bordercolor=c["border"])
-    style.configure("TLabelframe.Label", background=c["bg"], foreground=c["accent"])
+    style.configure("Well.TFrame", background=c["well"], relief="flat")
+    style.configure("TLabelframe", background=c["panel"], bordercolor=c["border"])
+    style.configure("TLabelframe.Label", background=c["panel"], foreground=c["fg"],
+                    font=f["section"])
     style.configure("TLabel", background=c["bg"], foreground=c["fg"])
     style.configure("Muted.TLabel", background=c["bg"], foreground=c["muted"])
     style.configure("Card.TLabel", background=c["panel"], foreground=c["fg"])
     style.configure("MutedCard.TLabel", background=c["panel"], foreground=c["muted"])
     style.configure("Title.TLabel", background=c["bg"], foreground=c["fg"],
-                    font=("Segoe UI", 15, "bold"))
-    style.configure("Status.TLabel", background=c["bg"], foreground=c["muted"],
-                    font=("Segoe UI", 10))
+                    font=f["title"])
+    style.configure("Subtitle.TLabel", background=c["bg"], foreground=c["muted"],
+                    font=f["body"])
+    style.configure("Section.TLabel", background=c["panel"], foreground=c["fg"],
+                    font=f["section"])
+    style.configure("CardTitle.TLabel", background=c["panel"], foreground=c["fg"],
+                    font=f["section"])
+    style.configure("Status.TLabel", background=c["panel"], foreground=c["muted"],
+                    font=f["caption"])
 
     style.configure("TEntry", fieldbackground=c["field"], foreground=c["fg"],
                     bordercolor=c["border"], lightcolor=c["field"],
-                    darkcolor=c["field"], insertcolor=c["fg"], padding=4)
+                    darkcolor=c["field"], insertcolor=c["fg"], padding=(10, 6),
+                    relief="flat")
+    style.map("TEntry",
+              bordercolor=[("focus", c["accent"])],
+              lightcolor=[("focus", c["accent"])],
+              darkcolor=[("focus", c["accent"])])
     # Combobox：输入框本体 + 下拉箭头。下拉列表本体不能用 style 配，见下方
     style.configure("TCombobox", fieldbackground=c["field"], foreground=c["fg"],
-                    background=c["field"], bordercolor=c["border"], padding=4,
-                    arrowcolor=c["fg"], arrowsize=14,
+                    background=c["field"], bordercolor=c["border"], padding=(10, 6),
+                    arrowcolor=c["muted"], arrowsize=12,
                     lightcolor=c["field"], darkcolor=c["field"],
                     insertcolor=c["fg"])
     style.map("TCombobox",
               fieldbackground=[("readonly", c["field"]), ("disabled", c["panel"])],
               foreground=[("readonly", c["fg"]), ("disabled", c["muted"])],
-              background=[("readonly", c["field"]), ("active", c["card"])],
-              arrowcolor=[("disabled", c["muted"]), ("active", c["accent"])],
+              background=[("readonly", c["field"]), ("active", c["sel"])],
+              arrowcolor=[("disabled", c["muted"]), ("active", c["fg"])],
               selectbackground=[("readonly", c["field"])],
-              selectforeground=[("readonly", c["fg"])])
-    apply_option_db(root, c, ("Microsoft YaHei UI", 10))
+              selectforeground=[("readonly", c["fg"])],
+              bordercolor=[("focus", c["accent"])])
+    apply_option_db(root, c, f["body"])
 
     # Checkbutton 已改用 tk.Checkbutton（ThemedCheckbutton），不经过 ttk。
-    # 这里只保留 ttk 版本的基本配色，防止万一还有残留的 ttk.Checkbutton。
     for name, bg in (("TCheckbutton", c["bg"]), ("Card.TCheckbutton", c["panel"])):
-        style.configure(name, background=bg, foreground=c["fg"], padding=(2, 3))
+        style.configure(name, background=bg, foreground=c["fg"], padding=(2, 4))
         style.map(name,
                   background=[("active", bg), ("disabled", bg)],
                   foreground=[("disabled", c["muted"]), ("active", c["fg"])])
 
-    style.configure("TRadiobutton", background=c["bg"], foreground=c["fg"],
+    style.configure("TRadiobutton", background=c["panel"], foreground=c["fg"],
                     indicatorcolor=c["field"], indicatorbackground=c["field"])
-    style.map("TRadiobutton", background=[("active", c["bg"])],
+    style.map("TRadiobutton", background=[("active", c["panel"])],
               indicatorcolor=[("selected", c["accent"]), ("!selected", c["field"])])
 
+    # 次按钮：描边式；主按钮：实心系统蓝；危险：实心红
     style.configure("TButton", background=c["card"], foreground=c["fg"],
-                    bordercolor=c["border"], padding=(10, 5), focusthickness=0)
+                    bordercolor=c["border"], lightcolor=c["card"],
+                    darkcolor=c["card"], padding=(12, 6), focusthickness=0,
+                    relief="flat", font=f["body"])
     style.map("TButton",
-              background=[("active", c["border"]), ("disabled", c["panel"])],
-              foreground=[("disabled", c["muted"])])
+              background=[("active", c["sel"]), ("pressed", c["border"]),
+                          ("disabled", c["panel"])],
+              foreground=[("disabled", c["muted"])],
+              bordercolor=[("active", c["border"]), ("disabled", c["border"])])
+    style.configure("Ghost.TButton", background=c["panel"], foreground=c["muted"],
+                    bordercolor=c["border"], lightcolor=c["panel"],
+                    darkcolor=c["panel"], padding=(10, 5))
+    style.map("Ghost.TButton",
+              background=[("active", c["sel"])],
+              foreground=[("active", c["fg"])])
     style.configure("Accent.TButton", background=c["accent"], foreground=c["accent_fg"],
-                    bordercolor=c["accent"], padding=(14, 7))
+                    bordercolor=c["accent"], lightcolor=c["accent"],
+                    darkcolor=c["accent"], padding=(14, 6))
     style.map("Accent.TButton",
-              background=[("active", c["accent"]), ("disabled", c["border"])])
+              background=[("active", c["accent_hover"]),
+                          ("pressed", c["accent_press"]),
+                          ("disabled", c["border"])],
+              bordercolor=[("active", c["accent_hover"]),
+                           ("pressed", c["accent_press"]),
+                           ("disabled", c["border"])])
     style.configure("Danger.TButton", background=c["danger"], foreground="#ffffff",
-                    bordercolor=c["danger"], padding=(14, 7))
-    style.map("Danger.TButton", background=[("active", c["danger"]),
-                                            ("disabled", c["border"])])
+                    bordercolor=c["danger"], lightcolor=c["danger"],
+                    darkcolor=c["danger"], padding=(14, 6))
+    style.map("Danger.TButton",
+              background=[("active", c["danger_hover"]),
+                          ("pressed", c["danger"]),
+                          ("disabled", c["border"])],
+              bordercolor=[("active", c["danger_hover"]),
+                           ("disabled", c["border"])])
 
-    style.configure("TProgressbar", background=c["accent"], troughcolor=c["field"],
-                    bordercolor=c["border"], thickness=14)
+    style.configure("TProgressbar", background=c["accent"], troughcolor=c["well"],
+                    bordercolor=c["border"], lightcolor=c["accent"],
+                    darkcolor=c["accent"], thickness=10)
     style.configure("TSeparator", background=c["border"])
     style.configure("TNotebook", background=c["bg"], bordercolor=c["border"])
     style.configure("TNotebook.Tab", background=c["panel"], foreground=c["muted"],
                     padding=(12, 5))
     style.map("TNotebook.Tab", background=[("selected", c["card"])],
               foreground=[("selected", c["fg"])])
-    style.configure("Treeview", background=c["field"], foreground=c["fg"],
-                    fieldbackground=c["field"], bordercolor=c["border"])
-    style.configure("Vertical.TScrollbar", background=c["card"],
-                    troughcolor=c["field"], bordercolor=c["border"])
+    style.configure("Treeview", background=c["panel"], foreground=c["fg"],
+                    fieldbackground=c["panel"], bordercolor=c["border"],
+                    lightcolor=c["panel"], darkcolor=c["panel"], rowheight=26)
+    style.map("Treeview",
+              background=[("selected", c["accent"])],
+              foreground=[("selected", c["accent_fg"])])
+    style.configure("Treeview.Heading", background=c["panel"], foreground=c["muted"],
+                    bordercolor=c["border"], font=f["caption"])
+    style.map("Treeview.Heading", background=[("active", c["sel"])])
 
-    # 主题切换时把已存在 Combobox 的下拉列表、复选框一起换色
+    # 滚动条：垂直/水平、普通/按下/禁用都要显式配色，否则 clam 会露出浅色 trough。
+    # 深色（macOS 风格）：细 thumb、无箭头、槽与控件底色同阶。
+    for orient in ("Vertical", "Horizontal"):
+        name = f"{orient}.TScrollbar"
+        style.configure(name,
+                        background=c["card"], troughcolor=c["well"],
+                        bordercolor=c["well"], arrowcolor=c["muted"],
+                        lightcolor=c["card"], darkcolor=c["card"],
+                        gripcount=0, arrowsize=12, width=12)
+        style.map(name,
+                  background=[("active", c["muted"]), ("pressed", c["fg"]),
+                              ("disabled", c["well"])],
+                  arrowcolor=[("active", c["fg"]), ("pressed", c["fg"]),
+                              ("disabled", c["border"])],
+                  bordercolor=[("disabled", c["well"])])
+    # 未指定 style 时 ttk.Scrollbar 会落到 TScrollbar，补一份兜底
+    style.configure("TScrollbar", background=c["card"], troughcolor=c["well"],
+                    bordercolor=c["well"], arrowcolor=c["muted"],
+                    lightcolor=c["card"], darkcolor=c["card"])
+
+    style.configure("TSpinbox", fieldbackground=c["field"], foreground=c["fg"],
+                    background=c["card"], bordercolor=c["border"],
+                    arrowcolor=c["muted"], insertcolor=c["fg"],
+                    lightcolor=c["field"], darkcolor=c["field"], padding=(10, 6))
+    style.map("TSpinbox",
+              fieldbackground=[("disabled", c["panel"])],
+              foreground=[("disabled", c["muted"])],
+              arrowcolor=[("disabled", c["muted"])])
+    style.configure("TScale", background=c["panel"], troughcolor=c["well"],
+                    bordercolor=c["border"], lightcolor=c["accent"],
+                    darkcolor=c["accent"])
+
+    # 任何独立 Listbox（例如下拉弹窗）也走深色，不依赖 option database 是否生效
+    root.option_add("*Listbox.background", c["field"])
+    root.option_add("*Listbox.foreground", c["fg"])
+    root.option_add("*Listbox.selectBackground", c["accent"])
+    root.option_add("*Listbox.selectForeground", c["accent_fg"])
+    root.option_add("*Listbox.highlightBackground", c["border"])
+    root.option_add("*Listbox.highlightColor", c["border"])
+    root.option_add("*Listbox.borderWidth", 0)
+
+    # 已存在的 Combobox 下拉列表、复选框统一换色（固定深色，仅初始化时调用）
     refresh_all_popdowns(c)
     refresh_all_checkbuttons(c)
     return c
 
 
-def enable_windows_dark_titlebar(hwnd: int, dark: bool = True) -> None:
+def enable_windows_dark_titlebar(hwnd: int) -> None:
     """Windows 10/11：让标题栏跟随深色（失败静默忽略）。"""
     try:
         import ctypes
-        value = ctypes.c_int(1 if dark else 0)
+        value = ctypes.c_int(1)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(  # type: ignore[attr-defined]
             hwnd, 20 if _win11_dark_attr_supported() else 19,
             ctypes.byref(value), ctypes.sizeof(value))

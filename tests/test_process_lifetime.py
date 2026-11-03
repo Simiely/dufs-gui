@@ -96,6 +96,30 @@ class ProcessLifetimeTest(unittest.TestCase):
                 child.kill()
                 child.wait(timeout=5)
 
+    @unittest.skipUnless(os.name == "nt", "Windows Job Object 专项")
+    def test_win_job_close_kills_all_children(self):
+        """同一个 Job 关联多个 dufs 实例（不同 IP 同端口），关闭后全部退出。"""
+        job = _WinJob()
+        children = [
+            subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for _ in range(2)
+        ]
+        try:
+            for child in children:
+                self.assertTrue(job.assign(child.pid),
+                                "多实例逐个加入同一个 Job 失败")
+            job.close()
+            for child in children:
+                child.wait(timeout=10)
+        finally:
+            job.close()
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
+
     def test_child_exits_when_parent_is_killed(self):
         with tempfile.TemporaryDirectory() as td:
             pid_file = Path(td) / "child.pid"

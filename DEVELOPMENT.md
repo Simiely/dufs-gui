@@ -26,6 +26,7 @@ ui/
   form.py          表单变量 ⇄ ServerConfig 的双向映射
   layout.py        主窗口控件骨架
   advanced.py      高级设置弹窗
+  bindlist.py      固定高度网卡勾选列表（Canvas + 内嵌行；方向键/空格/滚动）
 core/
   config.py        ServerConfig 数据类：字段 + 命令行生成 + 校验 + 持久化；
                    AppConfig schema 版本化（v1→v2 自动迁移、坏配置备份、原子写）
@@ -34,10 +35,13 @@ core/
   dufsbin.py       dufs.exe 的查找 / 释放 / 安装 / 皮肤目录定位与校验
   server.py        DufsProcess：子进程启停、日志采集、就绪探测、DLL 环境清理
   netutil.py       本机 IP、端口占用检测、空闲端口推荐、前缀规范化
-  theme.py         深浅主题配色；ThemedCombobox（下拉列表配色可控）
+  netif.py         Windows GetAdaptersAddresses 枚举网卡：排序（物理 > 虚拟/VPN > IPv6 >
+                   不可用 > 0.0.0.0 > 回环）、默认勾选、保存值回填
+  instances.py     InstanceManager：每个绑定地址一个 DufsProcess，共用端口/目录/Job Object，
+                   并行等待就绪、单地址失败隔离、启动结果汇总
+  theme.py         固定深色 + Apple 设计 token（含滚动条/下拉/列表/勾选框）
   winpos.py        弹窗定位（多显示器钳制）
   crashlog.py      sys.excepthook / 线程异常 / tkinter 回调异常 → 落盘
-  app_state.py     全局深色状态（避免模块循环依赖）
 assets/            dufs 官方 v0.47.0 网页皮肤 + CSS 覆盖层
 tools/             fetch_dufs.py（下载 dufs）、fetch_skin.py（同步官方皮肤）、
                    _integrity.py（固定版本 + 逐源 SHA256）、
@@ -66,6 +70,22 @@ tests/             标准库 unittest；tk_stub.py 提供无 tkinter 环境下�
 - 配置保存走同目录临时文件 + `os.replace`，避免崩溃留下半截 JSON。
 - 启动决策集中在 `core/launch.py` 的 `build_launch_plan(cfg)`：
   参数、皮肤诊断、降级参数、检查主机与 URL 都是纯数据，界面层只执行计划。
+- 多地址：`ServerConfig.binds` 为真源，`effective_binds()` 兼容旧 `bind` 单地址自动升级；
+  `build_launch_plans()` 为每个地址生成一份 `LaunchPlan`（各自 `-b`、同一端口），
+  `InstanceManager` 逐地址拉起 `DufsProcess` 并加入**同一个 Job Object**。
+  `all_loopback()` 仅在全部地址为回环时为真。
+- `summarize_start_results()` 汇总为「N 个地址均已启动 / N 个中 M 个已启动 / 全部失败」，
+  端口占用只跳过该地址，不阻断其他地址。
+
+界面（P1.5）：
+
+- 固定深色，token 集中在 `core/theme.py`：`#1e1e1e` 底、`#232325` 面板、`#2c2c2e` 控件、
+  `#1a1a1c` 滚动槽、`#3a3a3c` 边框、`#8e8e93` 次要文字、`#0a84ff` 强调、`#ff453a` 危险；
+  间距 4/8/12/16/24（8pt 栅格），控件高约 32px，三级字号。
+- Tk 不支持真实圆角、毛玻璃、SF 字体与连续动画，因此层次用**背景色差 + 1px 低对比描边**
+  表达，不为"像 macOS"堆自绘；勾选框用自绘 16x16 位图保证深色下选中态可见。
+- 网卡选择从下拉改为固定高度勾选列表：`ui/bindlist.py` 内嵌 Frame + Canvas，
+  高 5 行，超出滚动（滚动条走 `Vertical.TScrollbar` 深色样式），不随网卡数量撑高窗口。
 
 构建与产物（P2）：
 
@@ -80,7 +100,8 @@ tests/             标准库 unittest；tk_stub.py 提供无 tkinter 环境下�
 
 关键安全默认（P0）：
 
-- `ServerConfig.validate()` 拒绝"非回环监听 + 无访问口令"，同时校验 `-a` 参数合法性；
+- 访问口令是可选能力：`ServerConfig.validate()` 不再因"非回环监听 + 无口令"拒绝启动，
+  只校验 `-a` 参数合法性；未填口令即匿名访问，且**运行时不产生任何提示**。
   `command_line()` 只输出脱敏口令，日志与 URL 不含密码。
 - Windows 子进程加入 Job Object（`KILL_ON_JOB_CLOSE`）；POSIX 用 atexit/SIGTERM 兜底。
 - 下载脚本固定 `pinned_version`，每个来源单独比对 SHA256；哈希不符立即失败，

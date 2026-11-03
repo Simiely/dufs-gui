@@ -70,6 +70,49 @@ class UiSmokeTest(unittest.TestCase):
             self.gui._switch_profile()
             self.assertEqual(self.gui.v_path.get(), td)
 
+    def test_empty_selection_blocks_start_without_dialog(self):
+        """全部未选：不启动、不弹窗，只给一行状态提示。"""
+        self.gui.bindlist.set_selection([])
+        self.gui._start()
+        self.assertEqual(self.gui.v_status.get(), "请至少选择一个共享网卡")
+        self.assertFalse(self.gui.manager.running)
+        self.gui.bindlist.set_selection(["127.0.0.1"])
+
+    def test_wildcard_is_exclusive(self):
+        """0.0.0.0 与具体地址互斥；勾「仅本机」可与其他网卡共存。"""
+        items = self.gui.bindlist.items
+        wildcard = next(i for i in items if i.is_wildcard)
+        loopback = next(i for i in items if i.address == "127.0.0.1")
+        self.gui.bindlist.set_selection([wildcard.address, loopback.address])
+        self.assertEqual(self.gui.bindlist.selected(), [wildcard.address],
+                         "恢复配置时通配地址必须独占")
+
+        self.gui.bindlist.set_selection([loopback.address])
+        index = self.gui.bindlist.items.index(wildcard)
+        self.gui.bindlist._toggle(index)
+        self.assertEqual(self.gui.bindlist.selected(), [wildcard.address])
+
+        index = self.gui.bindlist.items.index(loopback)
+        self.gui.bindlist._toggle(index)
+        self.assertEqual(self.gui.bindlist.selected(), [loopback.address],
+                         "仅本机勾选时应自动取消通配，不互斥")
+
+    def test_keyboard_navigation_and_space_toggle(self):
+        """方向键移动焦点、空格切换勾选。"""
+        self.gui.bindlist.set_selection(["127.0.0.1"])
+        self.gui.bindlist._focus_index = 0
+        self.gui.bindlist._move(1)
+        self.assertEqual(self.gui.bindlist._focus_index, 1)
+
+        target = next(i for i, item in enumerate(self.gui.bindlist.items)
+                      if item.bindable and item.address != "127.0.0.1")
+        self.gui.bindlist._focus_index = target
+        before = set(self.gui.bindlist.selected())
+        self.gui.bindlist._toggle(target)
+        after = set(self.gui.bindlist.selected())
+        self.assertNotEqual(before, after)
+        self.gui.bindlist.set_selection(["127.0.0.1"])
+
     def test_start_stop_flow(self):
         """用一个会真正监听端口的假 dufs，跑通开启→运行→停止全流程。
 
@@ -83,17 +126,23 @@ class UiSmokeTest(unittest.TestCase):
                 "import sys, http.server, socketserver\n"
                 "args = sys.argv[1:]\n"
                 "port = int(args[args.index('-p') + 1]) if '-p' in args else 5000\n"
-                "print('fake dufs on', port, flush=True)\n"
+                "host = args[args.index('-b') + 1] if '-b' in args else '127.0.0.1'\n"
+                "print('fake dufs on', host, port, flush=True)\n"
                 "class H(http.server.BaseHTTPRequestHandler):\n"
                 "    def do_GET(self):\n"
                 "        self.send_response(200); self.end_headers()\n"
                 "        self.wfile.write(b'ok')\n"
                 "    def log_message(self, *a): pass\n"
-                "socketserver.TCPServer(('127.0.0.1', port), H).serve_forever()\n",
+                "if ':' in host:\n"
+                "    class S(socketserver.ThreadingTCPServer):\n"
+                "        address_family = __import__('socket').AF_INET6\n"
+                "else:\n"
+                "    S = socketserver.ThreadingTCPServer\n"
+                "S((host, port), H).serve_forever()\n",
                 encoding="utf-8")
 
             self.gui.v_path.set(str(fake))
-            self.gui.v_bind.set("127.0.0.1")
+            self.gui.bindlist.set_selection(["127.0.0.1"])
             self.gui.v_port.set(str(find_free_port(5100)))
             self.gui.v_prefix.set("files")
 
@@ -155,30 +204,38 @@ class UiSmokeTest(unittest.TestCase):
 
     def test_health_status_transitions(self):
         """运行中 -> 无响应 -> 恢复 -> 已退出，全部经队列在主线程更新。"""
+        from core.instances import InstanceState
+
         class FakeProc:
             pid = 123
+            running = True
 
-            @staticmethod
-            def poll():
-                return None
+            def stop(self):
+                self.running = False
 
-        self.gui.proc.proc = FakeProc()
-        self.gui.v_status.set("运行中 · PID 123")
-        self.gui.log_queue.put(("health_fail", "timed out"))
+            def recent_output(self, _n=0):
+                return ""
+
+        state = InstanceState(
+            bind="127.0.0.1", label="仅本机",
+            url="http://127.0.0.1:5000/", port=5000,
+            status="运行中", process=FakeProc())
+        self.gui.manager.states = [state]
+        self.gui.log_queue.put(("health_fail", "127.0.0.1|timed out"))
         self.gui._drain_queues()
         self.assertIn("无响应", self.gui.v_status.get())
         self.assertEqual(self.gui.dot.cget("fg"), self.gui.colors["warn"])
 
-        self.gui.log_queue.put(("health_ok", "HTTP 200"))
+        self.gui.log_queue.put(("health_ok", "127.0.0.1|HTTP 200"))
         self.gui._drain_queues()
         self.assertTrue(self.gui.v_status.get().startswith("运行中"))
         self.assertEqual(self.gui.dot.cget("fg"), self.gui.colors["ok"])
 
-        self.gui.proc.proc = None
-        self.gui.v_status.set("运行中 · PID 123")
-        self.gui.log_queue.put(("exit", None))
+        state.process.running = False
+        self.gui.log_queue.put(("exit", "127.0.0.1"))
         self.gui._drain_queues()
         self.assertEqual(self.gui.v_status.get(), "已退出")
+        self.gui.manager.states = []
 
     def test_advanced_popup(self):
         """高级设置应弹出独立窗口，而不是在主界面展开。"""
@@ -190,11 +247,13 @@ class UiSmokeTest(unittest.TestCase):
         self.assertIs(self.gui.adv_win, win)
         self.gui.adv_win = None
 
-    def test_theme_toggle(self):
-        before = self.gui.dark
-        self.gui._toggle_theme()
-        self.assertNotEqual(before, self.gui.dark)
-        self.gui._toggle_theme()
+    def test_theme_is_fixed_dark(self):
+        """应用固定深色：不得有切换入口、隐藏状态或浅色分支。"""
+        from core.theme import DARK
+        self.assertFalse(hasattr(self.gui, "btn_theme"), "不应保留主题切换按钮")
+        self.assertFalse(hasattr(self.gui, "_toggle_theme"), "不应保留切换方法")
+        self.assertFalse(hasattr(self.gui, "dark"), "不应保留深浅状态开关")
+        self.assertEqual(self.gui.colors["bg"], DARK["bg"])
 
     def test_advanced_popup_big_enough(self):
         """弹窗必须足够大：内容约 700px 高，小于它就一定被裁切。
@@ -269,8 +328,8 @@ class UiSmokeTest(unittest.TestCase):
 class SkinFallbackPersistenceTest(unittest.TestCase):
     """端到端覆盖“降级后仍会执行统一保存”的路径。
 
-    旧测试只扫描降级代码段 900 字符，看不到 _start() 末尾的 _save()，
-    因此没抓到“运行时降级把 custom_ui=false 写盘”的回归。
+    多实例改造后降级发生在 InstanceManager 内部：首次带 --assets 未就绪，
+    自动用不带皮肤的参数重试；这里用假进程验证重试流程与配置写盘。
     """
 
     def setUp(self):
@@ -283,21 +342,35 @@ class SkinFallbackPersistenceTest(unittest.TestCase):
             dufsbin, "ensure_dufs", return_value=Path(sys.executable))
         self.ensure_patch.start()
         self.gui = app_module.DufsGui()
-
+        self.gui.bindlist.set_selection(["127.0.0.1"])
         self.calls = []
 
-        def fake_start(binary, args, cwd=None):
-            self.calls.append(list(args))
+        calls = self.calls
 
-        def fake_wait(port, host, timeout=8):
-            # 第一次（带 --assets）失败，第二次（不带）成功
-            return "--assets" not in self.calls[-1]
+        class FakeProc:
+            def __init__(self, log_queue, job=None, prefix="", tag=""):
+                self.running = False
+                self.recent = []
 
-        self.gui.proc.start = fake_start
-        self.gui.proc.wait_ready = fake_wait
-        self.gui.proc.stop = lambda *a, **k: None
+            def start(self, binary, args, cwd=None):
+                calls.append(list(args))
+
+            def wait_ready(self, port, host, timeout=8):
+                ok = "--assets" not in calls[-1]
+                self.running = ok
+                return ok
+
+            def stop(self):
+                self.running = False
+
+            def recent_output(self, _n=0):
+                return "带皮肤启动失败"
+
+        self.proc_patch = mock.patch("core.instances.DufsProcess", FakeProc)
+        self.proc_patch.start()
 
     def tearDown(self):
+        self.proc_patch.stop()
         self.gui.destroy()
         self.ensure_patch.stop()
         self.env_patch.stop()

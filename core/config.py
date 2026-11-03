@@ -28,8 +28,8 @@ def is_loopback_bind(bind: str) -> bool:
     """监听地址是否只对本机开放。
 
     空值不是合法监听地址（dufs 默认是 0.0.0.0，这里不能当成安全默认）；
-    无法解析的主机名也按"非回环"处理：宁可多要求一次口令，
-    也不要把未知地址当成安全地址。
+    无法解析的主机名也按"非回环"处理。
+    该判断只用于 URL/端口检查等展示逻辑，不再作为"必须设口令"的门槛。
     """
     host = (bind or "").strip().lower()
     if host.startswith("[") and host.endswith("]"):
@@ -49,7 +49,10 @@ class ServerConfig:
     """一个共享站点的全部配置。"""
 
     share_path: str = ""
+    #: 兼容旧配置的单地址字段；实际生效地址见 binds / effective_binds()
     bind: str = "127.0.0.1"
+    #: 多网卡同时共享：每个地址一个 dufs 实例
+    binds: list[str] = field(default_factory=list)
     port: int = 5000
     path_prefix: str = ""
     allow_upload: bool = True
@@ -69,15 +72,38 @@ class ServerConfig:
     log_path: str = ""
     tls_cert: str = ""
     tls_key: str = ""
-    #: 访问口令（dufs 的 -a user:pass）。留空表示不鉴权，此时只允许回环监听。
+    #: 访问口令（dufs 的 -a user:pass）。留空表示匿名访问（不鉴权），不做强制。
     #: 注意：明文保存在配置文件中，界面与日志只展示脱敏后的内容。
     auth_user: str = ""
     auth_pass: str = ""
 
+    # ---------- 监听地址 ----------
+    def effective_binds(self) -> list[str]:
+        """实际生效的监听地址：binds 优先，旧的单 bind 自动升级。"""
+        out: list[str] = []
+        for raw in self.binds:
+            addr = (raw or "").strip()
+            if addr and addr not in out:
+                out.append(addr)
+        if out:
+            return out
+        legacy = (self.bind or "").strip()
+        return [legacy] if legacy else []
+
+    def all_loopback(self) -> bool:
+        """所有监听地址都是回环才算「仅本机」。空地址不算。"""
+        binds = self.effective_binds()
+        return bool(binds) and all(is_loopback_bind(b) for b in binds)
+
     # ---------- 命令行 ----------
-    def to_args(self) -> list[str]:
+    def to_args(self, bind: str | None = None) -> list[str]:
+        """生成 dufs 参数。bind 指定时只绑定该地址（多进程模式使用）。"""
         args: list[str] = [self.share_path]
-        args += ["-b", self.bind, "-p", str(self.port)]
+        if bind is not None:
+            binds = [bind]
+        else:
+            binds = self.effective_binds()
+        args += ["-b", ",".join(binds), "-p", str(self.port)]
 
         prefix = normalize_prefix(self.path_prefix)
         if prefix:
@@ -153,53 +179,58 @@ class ServerConfig:
     def use_https(self) -> bool:
         return bool(self.tls_cert.strip() and self.tls_key.strip())
 
-    def display_host(self) -> str:
-        """0.0.0.0 之类通配地址在展示/打开浏览器时换成具体 IP。"""
-        host = self.bind.strip()
+    def _host_for(self, bind: str | None) -> str:
+        if bind is None:
+            binds = self.effective_binds()
+            host = binds[0] if binds else ""
+        else:
+            host = bind
+        host = (host or "").strip()
         if host.startswith("[") and host.endswith("]"):
             host = host[1:-1]
+        return host
+
+    def display_host(self, bind: str | None = None) -> str:
+        """0.0.0.0 之类通配地址在展示/打开浏览器时换成具体 IP。"""
+        host = self._host_for(bind)
         if host in ("0.0.0.0", "::", ""):
             from .netutil import local_ips
             return local_ips()[0] if local_ips() else "127.0.0.1"
         return host
 
-    def probe_host(self) -> str:
+    def probe_host(self, bind: str | None = None) -> str:
         """健康探测用的主机：通配绑定换成对应的回环地址。"""
-        host = self.bind.strip()
-        if host.startswith("[") and host.endswith("]"):
-            host = host[1:-1]
+        host = self._host_for(bind)
         if host in ("", "0.0.0.0"):
             return "127.0.0.1"
         if host == "::":
             return "::1"
         return host
 
-    def check_host(self) -> str:
+    def check_host(self, bind: str | None = None) -> str:
         """端口占用检查用的主机：通配绑定统一换成 IPv4 回环。
 
         与 probe_host 的区别是 '' / '::' / '[::]' 都回落到 127.0.0.1，
         保持历史行为（Windows 上直接连 ::1 的兼容性更差）。
         """
-        host = self.bind.strip()
-        if host.startswith("[") and host.endswith("]"):
-            host = host[1:-1]
+        host = self._host_for(bind)
         if host in ("", "0.0.0.0", "::"):
             return "127.0.0.1"
         return host
 
-    def health_url(self) -> str:
+    def health_url(self, bind: str | None = None) -> str:
         """dufs 官方健康检查地址，保持在 path-prefix 之下。"""
         scheme = "https" if self.use_https else "http"
         path = normalize_prefix(self.path_prefix)
-        host = self.probe_host()
+        host = self.probe_host(bind)
         if ":" in host:
             host = f"[{host}]"
         return f"{scheme}://{host}:{self.port}{path}/__dufs__/health"
 
-    def url(self) -> str:
+    def url(self, bind: str | None = None) -> str:
         scheme = "https" if self.use_https else "http"
         path = normalize_prefix(self.path_prefix)
-        host = self.display_host()
+        host = self.display_host(bind)
         # IPv6 字面量在 URL 里必须加方括号，否则 http://::1:5000/ 是非法格式
         if ":" in host:
             host = f"[{host}]"
@@ -233,13 +264,13 @@ class ServerConfig:
             if "@/" in val:
                 errs.append(f"访问口令的{label}不能包含 \"@/\""
                             "（dufs 按 user:pass@/path 解析）")
-        # 安全默认：非回环监听且没有口令时拒绝启动（而不是只弹一个可忽略的提示）。
-        # 理由：LAN 共享是高频场景，用户很容易在"确认一次"后忘记自己已经对外暴露。
-        if not self.bind.strip():
+        # 匿名访问是允许的：口令只是可选项，不做启动门槛。
+        binds = self.effective_binds()
+        if not binds:
             errs.append("监听地址不能为空（仅本机使用请填 127.0.0.1）")
-        elif not (user and pwd) and not is_loopback_bind(self.bind):
-            errs.append(f"监听地址 {self.bind.strip() or '(空)'} 不是回环地址，"
-                        "必须设置访问口令后才能启动")
+        wildcard = {"0.0.0.0", "::", "[::]"}
+        if len(binds) > 1 and any(b in wildcard for b in binds):
+            errs.append("0.0.0.0 / :: 表示所有网卡，不能与其他地址同时选择")
         if self.custom_ui and self.assets_dir.strip():
             from .dufsbin import validate_assets_dir
 
@@ -251,6 +282,10 @@ class ServerConfig:
     # ---------- 序列化 ----------
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
+        binds = self.effective_binds()
+        # bind 同步为第一个地址，保证旧版本/旧代码读到仍可用
+        d["bind"] = binds[0] if binds else ""
+        d["binds"] = list(binds)
         # 只有"明确关闭"才打标记：表示这是用户当下的选择，
         # 载入时不要被自愈逻辑改回 True。重新勾选后标记自然消失。
         if d.get("custom_ui") is False:
@@ -286,6 +321,21 @@ class ServerConfig:
             elif isinstance(default, str):
                 if isinstance(value, str):
                     setattr(cfg, f.name, value)
+        # ---- 多地址升级 ----
+        # 新格式用 binds 列表；旧配置只有 bind，读入后自动升级为单元素列表。
+        raw_binds = data.get("binds")
+        binds: list[str] = []
+        if isinstance(raw_binds, list):
+            for raw in raw_binds:
+                if isinstance(raw, str) and raw.strip() and raw.strip() not in binds:
+                    binds.append(raw.strip())
+        if not binds:
+            legacy = data.get("bind")
+            if isinstance(legacy, str) and legacy.strip():
+                binds = [legacy.strip()]
+        if binds:
+            cfg.binds = binds
+            cfg.bind = binds[0]
         # 自愈：v1.2.1 及更早的"皮肤启动失败自动降级"会把 custom_ui=false 写盘，
         # 造成"一次失败 = 永久关闭"。降级写盘的行为 v1.2.2 就去掉了，
         # 但**已经写进用户配置文件的 false 不会自己消失**，
@@ -304,7 +354,6 @@ class AppConfig:
     profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
     current: str = ""
     recent_paths: list[str] = field(default_factory=list)
-    dark_mode: bool = True
     current_config: dict[str, Any] = field(default_factory=dict)
     config_version: int = CONFIG_VERSION
     #: 载入时的告警（迁移/坏配置恢复）。不落盘，只在界面日志里提示一次。
@@ -357,14 +406,6 @@ class AppConfig:
         elif raw_recent is not None:
             notes.append("recent_paths 类型无效，已清空")
 
-        raw_dark = data.get("dark_mode", True)
-        if isinstance(raw_dark, bool):
-            dark = raw_dark
-        else:
-            dark = True
-            if raw_dark is not None:
-                notes.append("dark_mode 类型无效，已用默认值")
-
         raw_cc = data.get("current_config")
         if isinstance(raw_cc, dict):
             current_config = ServerConfig.from_dict(raw_cc).to_dict()
@@ -377,7 +418,6 @@ class AppConfig:
             profiles=profiles,
             current=current,
             recent_paths=recent,
-            dark_mode=dark,
             current_config=current_config,
             config_version=CONFIG_VERSION,
         )

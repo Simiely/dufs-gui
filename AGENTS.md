@@ -8,6 +8,9 @@
 - Python **3.9+**（打包推荐官方 CPython **3.12.x**；本机验证 **3.14.6**），仅标准库：tkinter / ttk
 - 打包：PyInstaller **6.22.3**（版本钉在 `requirements.txt`，不要自动升级）
 - 被封装对象：**dufs**（Rust 编写的单文件服务器，以子进程方式拉起）
+- 网卡枚举：ctypes 调 Windows `GetAdaptersAddresses`（iphlpapi），**零第三方依赖**，
+  不解析本地化的 `ipconfig` 文本
+- 多地址共享：每个绑定地址一个 dufs 进程，共用端口/目录/参数，全部加入同一个 Job Object
 - 网页皮肤：dufs 官方 assets v0.47.0 + CSS 覆盖层，零框架零 CDN
 
 ## 关键坑（改代码前必读）
@@ -16,7 +19,7 @@
 2. **`.bat` 必须存成 GBK 或纯 ASCII**。Windows 中文 cmd 按 GBK 读批处理，UTF-8 中文会被解成乱码并被当成命令执行（满屏"不是内部或外部命令"）。本项目所有 bat 用**纯 ASCII 英文**。
 3. **`--assets` 目录必须含 `index.html`**。dufs `src/args.rs` 的 `sanitize_assets_path` 会 `bail!`。只放 CSS 会让 dufs 拒绝启动。
 4. **Windows 上必须清理子进程的 DLL 搜索路径**。bootloader 用 `SetDllDirectoryW` 指向 `_MEIPASS`，该设置**被子进程继承**，外部 dufs.exe 可能加载到不兼容 DLL。`Popen` 前调 `SetDllDirectoryW(None)` 并从 PATH 剔除 `_MEIPASS`。
-5. **ttk.Combobox 的下拉列表是原生 tk.Listbox，不是 ttk 控件**。`ttk.Style` 无效，只能用 option database，且大小写敏感（`selectBackground` 的 B 必须大写）。运行时切主题还得用 `tk.eval` 直接刷。
+5. **ttk.Combobox 的下拉列表是原生 tk.Listbox，不是 ttk 控件**。`ttk.Style` 无效，只能用 option database，且大小写敏感（`selectBackground` 的 B 必须大写）。本应用固定深色，初始化时用 `tk.eval` 直接刷一次已存在列表即可。
 6. **clam 主题的对勾是硬编码深色，且 `indicatorcolor` 会静默失效**（不报错，就是没效果）。
    不要靠配色去调，直接**自绘 16x16 位图 + `element_create` 替换指示器**
    （见 `core/theme.py` 的 `_install_check_indicator`）。自绘图片必须长期持有引用，否则被 GC 后变空白。
@@ -27,10 +30,24 @@
    升级 dufs 后执行 `python tools/fetch_skin.py <版本>` 重新生成。
 8. **`ttk.Label` 不要写死 `wraplength`**。窗口宽度和可用宽度不一致时换行位置会错乱，
    长文本被截得看不懂（等效命令曾显示成 `--e`）。改为 `<Configure>` 里按真实宽度自适应。
+9. **网卡多选不要改回下拉单选**。UI 定稿是固定高度勾选列表（`ui/bindlist.py`），
+   高 5 行、超出滚动、方向键/空格/Tab 可操作；下拉单选框会让"同时共享多块网卡"不可见。
+10. **不要把多地址改回单进程 `-b a,b`**。dufs 0.47 支持多绑定，但任一地址端口被占会让
+    整个进程失败，无法做到单地址失败隔离；现方案是每地址一个进程 + 同一 Job Object。
+11. **网卡排序只改 `core/netif.py`**。顺序为物理网卡 IPv4（有线优先、私有网段优先）→
+    其他 IPv4（虚拟/VPN）→ IPv6 → 不可用 → `0.0.0.0` → 回环；`127.0.0.1` 永远最后，
+    默认选中第一块已连接非回环网卡（只有回环可用时才默认回环）。
 
 ## 约定
 
 - UI 文案中文；代码注释中文；docstring 中文
+- 界面**固定深色**（`core/theme.py`），不要新增浅色分支、主题开关或隐藏状态；
+  滚动条、下拉列表、Spinbox、Text 等原生/半原生控件必须显式配色，禁止残留白色部件
+- 视觉按 macOS 深色 token（`DARK` / `SPACE` / `RADIUS` / `fonts()`）：背景色差分层次、
+  8pt 栅格、控件高约 32px、三级字号；**不引入第三方 UI 库，不用 emoji 当图标**。
+  Tk 做不到真实圆角/毛玻璃/动画，不要为此堆自绘，层次用色差 + 1px 低对比描边表达
+- 无口令共享是**合法路径且完全静默**：不弹窗、不写状态栏、不打警告日志；只在文档描述
+  "不填口令即为匿名访问"，不要在任何地方加运行时提醒
 - 除 PyInstaller 外**不引入第三方运行时依赖**（保持打包体积小、可靠性高）
 - `bin/dufs.exe` 不入库（体积大 + 平台相关），用 `tools/fetch_dufs.py` 获取
 - 所有 bat 纯 ASCII；README 等 Markdown 用 UTF-8

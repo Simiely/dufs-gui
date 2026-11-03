@@ -28,7 +28,7 @@ class _WinJob:
         self._handle = None
 
     def assign(self, pid: int) -> bool:
-        """把 pid 放进作业并保持句柄；失败时返回 False（由调用方降级）。"""
+        """把 pid 放进作业并保持句柄；同一个 Job 可以反复 assign 多个进程。"""
         if os.name != "nt":
             return False
         try:
@@ -81,33 +81,27 @@ class _WinJob:
         kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 
-        handle = kernel32.CreateJobObjectW(None, None)
-        if not handle:
-            return False
-
-        info = _EXTENDED_LIMIT_INFORMATION()
-        info.BasicLimitInformation.LimitFlags = self._LIMIT_KILL_ON_JOB_CLOSE
-        if not kernel32.SetInformationJobObject(
-                handle, self._EXTENDED_LIMIT_INFORMATION,
-                ctypes.byref(info), ctypes.sizeof(info)):
-            kernel32.CloseHandle(handle)
-            return False
+        if not self._handle:
+            handle = kernel32.CreateJobObjectW(None, None)
+            if not handle:
+                return False
+            info = _EXTENDED_LIMIT_INFORMATION()
+            info.BasicLimitInformation.LimitFlags = self._LIMIT_KILL_ON_JOB_CLOSE
+            if not kernel32.SetInformationJobObject(
+                    handle, self._EXTENDED_LIMIT_INFORMATION,
+                    ctypes.byref(info), ctypes.sizeof(info)):
+                kernel32.CloseHandle(handle)
+                return False
+            self._handle = handle
 
         # PROCESS_SET_QUOTA | PROCESS_TERMINATE 是 AssignProcessToJobObject 所需权限
         proc_handle = kernel32.OpenProcess(0x0100 | 0x0001, False, int(pid))
         if not proc_handle:
-            kernel32.CloseHandle(handle)
             return False
         try:
-            ok = bool(kernel32.AssignProcessToJobObject(handle, proc_handle))
+            return bool(kernel32.AssignProcessToJobObject(self._handle, proc_handle))
         finally:
             kernel32.CloseHandle(proc_handle)
-        if not ok:
-            kernel32.CloseHandle(handle)
-            return False
-
-        self._handle = handle
-        return True
 
     def close(self) -> None:
         if not self._handle:
@@ -230,11 +224,16 @@ class DufsProcess:
     #: （日志区消费完就没了，失败时需要回溯）
     RECENT_MAX = 60
 
-    def __init__(self, log_queue: queue.Queue):
+    def __init__(self, log_queue: queue.Queue, job: _WinJob | None = None,
+                 prefix: str = "", tag: str = ""):
         self.log_queue = log_queue
         self.proc: subprocess.Popen | None = None
         self._reader: threading.Thread | None = None
         self._job: _WinJob | None = None
+        #: 共享 Job：多实例启动时由管理器创建，本进程不负责关闭
+        self._shared_job = job
+        self.prefix = prefix
+        self.tag = tag
         self.recent: deque[str] = deque(maxlen=self.RECENT_MAX)
 
     def recent_output(self, limit: int = 20) -> str:
@@ -322,14 +321,21 @@ class DufsProcess:
             _restore_dll_directory(prev)
 
         if os.name == "nt":
-            # Windows：加入 Job Object，父进程被强杀时由内核带走子进程
-            self._job = _WinJob()
-            if not self._job.assign(self.proc.pid):
-                self._job.close()
-                self._job = None
+            # Windows：加入 Job Object，父进程被强杀时由内核带走子进程。
+            # 多实例共享同一个 Job：所有 dufs 实例逐个 assign 进去。
+            job = self._shared_job
+            owns_job = False
+            if job is None:
+                job = _WinJob()
+                owns_job = True
+            if not job.assign(self.proc.pid):
+                if owns_job:
+                    job.close()
                 hint = "提示：未能把 dufs 加入 Job Object，父进程被强杀时可能残留子进程"
                 self.recent.append(hint)
-                self.log_queue.put(("log", hint))
+                self.log_queue.put(("log", self.prefix + hint))
+            elif owns_job:
+                self._job = job
         else:
             # POSIX：登记到 atexit / SIGTERM / SIGINT 守卫
             _install_posix_guard()
@@ -346,7 +352,7 @@ class DufsProcess:
             for line in iter(stream.readline, ""):
                 line = line.rstrip()
                 self.recent.append(line)
-                self.log_queue.put(("log", line))
+                self.log_queue.put(("log", self.prefix + line))
         except (ValueError, OSError):
             pass
         finally:
@@ -354,7 +360,7 @@ class DufsProcess:
                 stream.close()
             except OSError:
                 pass
-            self.log_queue.put(("exit", None))
+            self.log_queue.put(("exit", self.tag))
 
     def _close_job(self) -> None:
         if self._job is not None:

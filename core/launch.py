@@ -31,10 +31,28 @@ class LaunchPlan:
     skin_arg: str = ""
     custom_ui: bool = True
     share_is_file: bool = False
+    #: 该计划对应的监听地址与端口（多实例启动使用）
+    bind: str = ""
+    port: int = 0
 
     @property
     def can_start(self) -> bool:
         return not self.errors
+
+
+@dataclass(frozen=True)
+class LaunchGroup:
+    """多地址启动计划：共享配置校验、皮肤诊断与口令日志。"""
+
+    errors: tuple[str, ...] = ()
+    plans: tuple[LaunchPlan, ...] = ()
+    auth_log: str = ""
+    skin_logs: tuple[str, ...] = ()
+    binary: Path | None = None
+
+    @property
+    def can_start(self) -> bool:
+        return not self.errors and bool(self.plans)
 
 
 def _skin_arg(args: Sequence[str]) -> str:
@@ -118,8 +136,8 @@ def build_launch_plan(
         fallback_args = tuple(replace(cfg, custom_ui=False).to_args())
 
     user = cfg.auth_user.strip()
-    auth_log = (f"访问口令：已启用（用户名 {user}）" if cfg.auth_pass
-                else "访问口令：未启用（仅允许回环监听）")
+    # 匿名访问完全静默：不写日志、不提示，和"没设口令"的用户预期一致
+    auth_log = f"访问口令：已启用（用户名 {user}）" if cfg.auth_pass else ""
 
     return LaunchPlan(
         errors=tuple(cfg.validate()),
@@ -133,4 +151,56 @@ def build_launch_plan(
         skin_arg=asset,
         custom_ui=cfg.custom_ui,
         share_is_file=share_is_file,
+        bind=cfg.effective_binds()[0] if cfg.effective_binds() else "",
+        port=int(cfg.port),
     )
+
+
+def build_launch_plans(cfg: ServerConfig, **kwargs) -> LaunchGroup:
+    """为每个监听地址生成一份独立计划（多进程共享同一端口/目录/参数）。
+
+    皮肤诊断只做一次（取第一个地址），避免日志重复；其余地址只做参数生成。
+    每个计划里的 -b 只包含自己的地址，便于按地址独立启动与报错。
+    """
+    from dataclasses import replace
+
+    binds = cfg.effective_binds()
+    errors = tuple(cfg.validate())
+    if not binds:
+        return LaunchGroup(errors=errors)
+
+    kwargs = dict(kwargs)
+    kwargs["diagnose_skin"] = True
+    plans: list[LaunchPlan] = []
+    for index, bind in enumerate(binds):
+        sub = replace(cfg, bind=bind, binds=[bind])
+        if index > 0:
+            kwargs["diagnose_skin"] = False
+        plans.append(build_launch_plan(sub, **kwargs))
+
+    first = plans[0]
+    return LaunchGroup(
+        errors=errors,
+        plans=tuple(plans),
+        auth_log=first.auth_log,
+        skin_logs=first.skin_logs,
+        binary=first.binary,
+    )
+
+
+def summarize_start_results(results: Sequence[tuple[str, bool, str]]) -> str:
+    """汇总多实例启动结果，供状态栏/日志直接展示。
+
+    results 每项为 ``(地址, 是否成功, 失败原因)``。
+    """
+    total = len(results)
+    if total == 0:
+        return "没有可启动的地址"
+    ok = sum(1 for _, success, _ in results if success)
+    failed = [(label, reason) for label, success, reason in results if not success]
+    if ok == total:
+        return f"{total} 个地址均已启动"
+    detail = "；".join(f"{label}（{reason or '未知原因'}）" for label, reason in failed)
+    if ok == 0:
+        return f"{total} 个地址全部启动失败：{detail}"
+    return f"{total} 个中 {ok} 个已启动，{len(failed)} 个失败：{detail}"

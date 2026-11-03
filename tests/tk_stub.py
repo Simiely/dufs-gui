@@ -78,6 +78,21 @@ class Widget:
     def rowconfigure(self, *_a, **_kw):
         pass
 
+    def grid_propagate(self, *_a, **_kw):
+        pass
+
+    def pack_propagate(self, *_a, **_kw):
+        pass
+
+    def focus_set(self):
+        pass
+
+    def destroy(self):
+        pass
+
+    def winfo_exists(self):
+        return True
+
     def bind(self, *_a, **_kw):
         pass
 
@@ -239,6 +254,12 @@ class Canvas(Widget):
     def yview_scroll(self, *_a):
         return None
 
+    def yview_moveto(self, *_a):
+        return None
+
+    def canvasy(self, *_a):
+        return 0
+
 
 class Tk(Widget):
     def __init__(self, *a, **kw):
@@ -332,9 +353,22 @@ class Text(Widget):
     def delete(self, *_a):
         pass
 
+    def yview(self, *_a):
+        return None
+
+    def xview(self, *_a):
+        return None
+
 
 class ScrolledText(Text):
     pass
+
+
+class Scrollbar(Widget):
+    """ttk.Scrollbar 桩：只需支持 set/grid/configure。"""
+
+    def set(self, *_a):
+        pass
 
 
 class Style:
@@ -372,6 +406,7 @@ def install() -> None:
     tk.PhotoImage = PhotoImage
     tk.Frame = Widget
     tk.Label = Widget
+    tk.Message = Widget
     tk.Button = Widget
     tk.Entry = Widget
     tk.Text = Text
@@ -385,8 +420,9 @@ def install() -> None:
     ttk = types.ModuleType("tkinter.ttk")
     for name in ("Frame", "Label", "Button", "Entry", "Combobox", "Checkbutton",
                  "Radiobutton", "LabelFrame", "Progressbar", "Separator", "Notebook",
-                 "Treeview", "Scrollbar"):
+                 "Treeview"):
         setattr(ttk, name, Widget)
+    ttk.Scrollbar = Scrollbar
     ttk.Style = Style
 
     scrolled = types.ModuleType("tkinter.scrolledtext")

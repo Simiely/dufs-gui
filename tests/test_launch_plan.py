@@ -12,7 +12,48 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from core.config import ServerConfig  # noqa: E402
-from core.launch import build_launch_plan  # noqa: E402
+from core.launch import (build_launch_plan, build_launch_plans,  # noqa: E402
+                         summarize_start_results)
+
+
+class MultiLaunchPlanTest(unittest.TestCase):
+    """多网卡：每个地址一份计划，各自只绑定自己的地址。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.share = Path(self.tmp.name) / "share"
+        self.share.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_one_plan_per_bind_with_single_bind_args(self):
+        cfg = ServerConfig(share_path=str(self.share), port=5000,
+                           binds=["192.168.1.5", "10.0.0.7"])
+        group = build_launch_plans(cfg, binary=sys.executable,
+                                   diagnose_skin=False)
+        self.assertEqual(group.errors, ())
+        self.assertEqual([p.bind for p in group.plans],
+                         ["192.168.1.5", "10.0.0.7"])
+        self.assertEqual({p.port for p in group.plans}, {5000})
+        for plan in group.plans:
+            self.assertEqual(plan.args[plan.args.index("-b") + 1], plan.bind,
+                             "每个实例只能绑定自己的地址，不能共用逗号列表")
+            self.assertEqual(plan.args[plan.args.index("-p") + 1], "5000")
+            self.assertNotIn("-a", plan.args, "无口令时不得生成 -a")
+        self.assertEqual(group.auth_log, "", "匿名访问必须完全静默")
+        self.assertEqual({p.url for p in group.plans},
+                         {"http://192.168.1.5:5000/", "http://10.0.0.7:5000/"})
+
+    def test_summary_reports_partial_failure(self):
+        self.assertEqual(summarize_start_results(
+            [("10.0.0.7", True, ""), ("192.168.1.5", False, "端口 5000 已被占用")]),
+            "2 个中 1 个已启动，1 个失败：192.168.1.5（端口 5000 已被占用）")
+        self.assertEqual(summarize_start_results(
+            [("a", True, ""), ("b", True, "")]), "2 个地址均已启动")
+        self.assertEqual(summarize_start_results(
+            [("a", False, "boom"), ("b", False, "boom")]),
+            "2 个地址全部启动失败：a（boom）；b（boom）")
 
 
 def _skin_dir(root: Path) -> Path:
@@ -57,9 +98,20 @@ class LaunchPlanTest(unittest.TestCase):
                     "host_check": "127.0.0.1",
                     "asset_count": 1,
                     "fallback_has_assets": False,
-                    "auth_log_has": "未启用",
+                    "auth_log_empty": True,
                     "skin_has": "已加入 --assets",
                     "url_prefix": "http://127.0.0.1:5000",
+                },
+            },
+            {
+                "name": "通配监听 + 无口令：允许启动且没有任何提示",
+                "cfg": self._cfg(bind="0.0.0.0"),
+                "kw": {"diagnose_skin": False},
+                "check": {
+                    "errors": (),
+                    "host_check": "127.0.0.1",
+                    "auth_log_empty": True,
+                    "args_no_auth": True,
                 },
             },
             {
@@ -144,6 +196,10 @@ class LaunchPlanTest(unittest.TestCase):
                                          int(c["fallback_has_assets"]))
                 if "auth_log_has" in c:
                     self.assertIn(c["auth_log_has"], plan.auth_log)
+                if c.get("auth_log_empty"):
+                    self.assertEqual(plan.auth_log, "", "匿名访问不得有运行时提示")
+                if c.get("args_no_auth"):
+                    self.assertNotIn("-a", plan.args)
                 if "auth_log_not" in c:
                     self.assertNotIn(c["auth_log_not"], plan.auth_log)
                 if "args_has_auth" in c:

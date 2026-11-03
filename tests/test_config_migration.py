@@ -43,20 +43,21 @@ class ConfigMigrationTest(unittest.TestCase):
         # 类型不符 -> 回落默认 False，而不是把字符串 "no" 当布尔
         self.assertFalse(cfg.profiles["p1"]["allow_delete"])
         self.assertEqual(cfg.recent_paths, ["C:\\data"])
-        self.assertTrue(cfg.dark_mode)  # 类型不符 -> 默认 True
+        # 旧版的 dark_mode 字段已移除，载入时忽略且不再回写
+        self.assertFalse(hasattr(cfg, "dark_mode"))
         self.assertEqual(cfg.current_config["port"], 4000)
 
     def test_saved_config_contains_version_and_roundtrips(self):
         cfg = AppConfig(profiles={"p": {"port": 6000}}, current="p",
-                        recent_paths=["/a"], dark_mode=False,
+                        recent_paths=["/a"],
                         current_config={"bind": "127.0.0.1"})
         save_config(cfg, self.path)
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         self.assertEqual(raw["config_version"], CONFIG_VERSION)
         self.assertNotIn("notice", raw)
+        self.assertNotIn("dark_mode", raw, "固定深色后不再持久化主题状态")
         back = load_config(self.path)
         self.assertEqual(back.profiles["p"]["port"], 6000)
-        self.assertFalse(back.dark_mode)
         self.assertEqual(back.notice, "")
 
     def test_bad_json_is_backed_up_and_defaults_used(self):
@@ -90,7 +91,7 @@ class ConfigMigrationTest(unittest.TestCase):
         self.assertEqual(list(cfg.profiles), ["ok"])
         self.assertEqual(cfg.profiles["ok"]["port"], 6000)
         self.assertEqual(cfg.recent_paths, ["a"])
-        self.assertTrue(cfg.dark_mode)
+        self.assertFalse(hasattr(cfg, "dark_mode"), "已删除的主题字段应被忽略")
         self.assertEqual(cfg.current_config, {})
         self.assertIn("类型无效", cfg.notice)
 
@@ -118,6 +119,37 @@ class ConfigMigrationTest(unittest.TestCase):
         self.assertFalse(cfg.allow_delete)
         self.assertEqual(cfg.assets_dir, "")
         self.assertTrue(cfg.custom_ui, "历史 false 且无用户标记时应自愈")
+
+    def test_legacy_single_bind_upgrades_to_binds(self):
+        """旧配置只有 bind，读入后自动升级为单元素 binds，不能失效。"""
+        cfg = ServerConfig.from_dict({"bind": "192.168.1.5", "port": 5000})
+        self.assertEqual(cfg.effective_binds(), ["192.168.1.5"])
+        d = cfg.to_dict()
+        self.assertEqual(d["bind"], "192.168.1.5")
+        self.assertEqual(d["binds"], ["192.168.1.5"])
+
+    def test_multi_binds_roundtrip_and_dedupe(self):
+        cfg = ServerConfig.from_dict({
+            "bind": "192.168.1.5", "binds": ["10.0.0.7", "192.168.1.5"],
+        })
+        self.assertEqual(cfg.effective_binds(), ["10.0.0.7", "192.168.1.5"])
+        self.assertEqual(cfg.bind, "10.0.0.7", "bind 同步为首个地址以供旧代码读取")
+        back = ServerConfig.from_dict(cfg.to_dict())
+        self.assertEqual(back.effective_binds(), ["10.0.0.7", "192.168.1.5"])
+
+    def test_all_loopback_semantics(self):
+        """所有地址均为回环才算「仅本机」；混入任意非回环即为对外。"""
+        self.assertTrue(ServerConfig(binds=["127.0.0.1", "::1"]).all_loopback())
+        self.assertFalse(ServerConfig(binds=["127.0.0.1", "10.0.0.7"]).all_loopback())
+        self.assertFalse(ServerConfig(bind="", binds=[]).all_loopback(),
+                         "空地址不算仅本机")
+
+    def test_wildcard_cannot_combine_with_specific_address(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg = ServerConfig(share_path=td, binds=["0.0.0.0", "192.168.1.5"])
+            self.assertTrue(any("0.0.0.0" in e for e in cfg.validate()))
+            self.assertEqual(
+                ServerConfig(share_path=td, binds=["0.0.0.0"]).validate(), [])
 
 
 if __name__ == "__main__":

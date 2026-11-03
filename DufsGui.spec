@@ -86,7 +86,7 @@ else:
 
 hiddenimports = [
     "core", "core.config", "core.dufsbin", "core.netutil", "core.server",
-    "core.theme", "core.crashlog", "core.app_state", "core.winpos",
+    "core.theme", "core.crashlog", "core.winpos",
     # 批次 2 拆分出的模块：显式声明，避免冻结环境漏收集
     "core.launch", "core.runtime",
     "ui", "ui.common", "ui.form", "ui.layout", "ui.advanced",

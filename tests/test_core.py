@@ -32,9 +32,10 @@ def ui_source() -> str:
 import core as core_pkg  # noqa: E402
 from core import crashlog, dufsbin, server  # noqa: E402
 from core.dufsbin import verify_assets_dir, webui_dir  # noqa: E402
-from core.config import (AppConfig, ServerConfig, load_config,  # noqa: E402
-                         normalize_prefix, save_config)
+from core.config import (AppConfig, ServerConfig, is_loopback_bind,  # noqa: E402
+                         load_config, normalize_prefix, save_config)
 from core.netutil import find_free_port, port_in_use  # noqa: E402
+from core.launch import build_launch_plan  # noqa: E402
 
 
 class PrefixTest(unittest.TestCase):
@@ -74,7 +75,7 @@ class UiRegressionTest(unittest.TestCase):
 
     def test_checkbox_contrast_meets_wcag(self):
         """未选中描边 vs 面板、白勾 vs 选中底，都要 >=3:1 才看得清。"""
-        from core.theme import DARK, LIGHT
+        from core.theme import DARK
 
         def lum(h):
             h = h.lstrip("#")
@@ -86,13 +87,21 @@ class UiRegressionTest(unittest.TestCase):
             la, lb = lum(a), lum(b)
             return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
 
-        for c in (DARK, LIGHT):
-            self.assertGreaterEqual(
-                cr(c["check_border"], c["panel"]), 3.0,
-                f"未选中描边 {c['check_border']} vs 面板 {c['panel']} 对比度不足")
-            self.assertGreaterEqual(
-                cr("#ffffff", c["check_on"]), 3.0,
-                f"白勾 on {c['check_on']} 对比度不足")
+        self.assertGreaterEqual(
+            cr(DARK["check_border"], DARK["panel"]), 3.0,
+            f"未选中描边 {DARK['check_border']} vs 面板 {DARK['panel']} 对比度不足")
+        self.assertGreaterEqual(
+            cr("#ffffff", DARK["check_on"]), 3.0,
+            f"白勾 on {DARK['check_on']} 对比度不足")
+
+    def test_scrollbars_are_dark(self):
+        """垂直/水平滚动条都要显式配置 trough/thumb/箭头，不能留白色。"""
+        src = (REPO / "core" / "theme.py").read_text(encoding="utf-8")
+        self.assertIn('for orient in ("Vertical", "Horizontal")', src)
+        self.assertIn("troughcolor=c[\"well\"]", src)
+        self.assertIn("arrowcolor=c[\"muted\"]", src)
+        self.assertIn("TSpinbox", src, "Spinbox 也要走深色")
+        self.assertNotIn("LIGHT", src, "已移除浅色主题，不得残留第二套配色")
 
     def test_tick_pixels_inside_box(self):
         """对勾像素必须落在 16x16 方框内部（1..14），否则会画到框外。"""
@@ -201,7 +210,7 @@ class ConfigTest(unittest.TestCase):
     def test_persist(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "config.json"
-            cfg = AppConfig(dark_mode=True, recent_paths=["/a"], profiles={"x": {"port": 1}})
+            cfg = AppConfig(recent_paths=["/a"], profiles={"x": {"port": 1}})
             save_config(cfg, p)
             back = load_config(p)
             self.assertEqual(back.recent_paths, ["/a"])
@@ -253,12 +262,14 @@ class AuthConfigTest(unittest.TestCase):
             cfg = ServerConfig(share_path="/tmp", auth_user=user, auth_pass=pwd)
             self.assertTrue(any("换行" in e for e in cfg.validate()), field)
 
-    def test_non_loopback_without_auth_is_denied(self):
+    def test_non_loopback_without_auth_is_allowed(self):
+        """匿名共享是允许的：不报错、不产生运行时提示，参数里也没有 -a。"""
         cfg = ServerConfig(share_path="/tmp", bind="0.0.0.0")
-        errs = cfg.validate()
-        self.assertTrue(any("回环" in e and "口令" in e for e in errs), errs)
-        # 拒绝必须发生在启动前，而不是只弹一个可忽略的警告
-        self.assertTrue(errs)
+        self.assertEqual(cfg.validate(), [])
+        self.assertNotIn("-a", cfg.to_args())
+        plan = build_launch_plan(cfg, diagnose_skin=False)
+        self.assertEqual(plan.errors, ())
+        self.assertEqual(plan.auth_log, "", "无口令时不得有任何提示输出")
 
     def test_non_loopback_with_auth_is_allowed(self):
         cfg = ServerConfig(share_path="/tmp", bind="0.0.0.0",
@@ -272,8 +283,11 @@ class AuthConfigTest(unittest.TestCase):
                 self.assertFalse(any("回环" in e for e in cfg.validate()), bind)
 
     def test_unknown_hostname_is_treated_as_non_loopback(self):
+        """无法解析的主机名仍算非回环；但它不再阻塞匿名共享。"""
+        self.assertFalse(is_loopback_bind("intranet-host"))
         cfg = ServerConfig(share_path="/tmp", bind="intranet-host")
-        self.assertTrue(any("回环" in e for e in cfg.validate()))
+        self.assertEqual(cfg.validate(), [])
+        self.assertEqual(cfg.check_host(), "intranet-host")
 
     def test_empty_bind_is_rejected(self):
         errs = ServerConfig(share_path="/tmp", bind="").validate()
@@ -795,22 +809,21 @@ class SkinConfigTest(unittest.TestCase):
         self.assertNotIn("--assets", ServerConfig(share_path=".", custom_ui=False).to_args())
 
     def test_downgrade_must_not_touch_form_value(self):
-        """自动降级只能改本次启动的临时 cfg，不能改界面变量。
+        """自动降级只能改本次启动的临时参数，不能改界面变量或写盘。
 
-        界面变量会在 _start() 末尾被 _save() 持久化；改成 False 就等于
-        “用户主动关闭”，下次载入不会再自愈。写盘路径由
-        test_ui_smoke.SkinFallbackPersistenceTest 做端到端覆盖。
+        多实例改造后降级逻辑在 core/instances.py；它只替换本次进程的参数，
+        不碰界面变量，也不调用配置保存。
         """
-        src = (REPO / "app.py").read_text(encoding="utf-8")
-        i = src.find("尝试不带自定义网页皮肤重新启动")
+        src = (REPO / "core" / "instances.py").read_text(encoding="utf-8")
+        i = src.find("尝试不带网页皮肤重试")
         self.assertGreater(i, 0, "未找到自动降级代码段")
-        seg = src[i:i + 900]
+        seg = src[i:i + 1200]
         code = "\n".join(l for l in seg.splitlines()
                           if not l.strip().startswith("#"))
-        self.assertNotIn("self.v_custom_ui", code,
+        self.assertNotIn("v_custom_ui", code,
                         "自动降级不得修改界面变量，否则会被末尾 _save() 持久化")
-        self.assertNotIn("_save()", code,
-                        "自动降级段内不得调用 _save()")
+        self.assertNotIn("save_config", code, "自动降级段内不得写盘")
+        self.assertNotIn("_save(", code, "自动降级段内不得调用 _save()")
 
     def test_webui_dir_only_looks_at_assets(self):
         """webui_dir 只认 assets/，不再有 webui/ 死分支。"""

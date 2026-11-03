@@ -16,7 +16,8 @@ class FormStateMixin:
     # ---------------- 变量 ----------------
     def _build_vars(self) -> None:
         self.v_path = tk.StringVar(value="")
-        self.v_bind = tk.StringVar(value="127.0.0.1")
+        # 监听地址是勾选列表（self.bindlist）；这里保留待应用的选择用于加载配置
+        self._pending_binds: list[str] = []
         # 用字符串输入：IntVar 在清空/输入非数字时 .get() 会抛 TclError，
         # 而 v_port 绑了 trace，用户在编辑框里删字就会触发错误弹窗。
         self.v_port = tk.StringVar(value="5000")
@@ -42,10 +43,17 @@ class FormStateMixin:
         self.v_status = tk.StringVar(value="未启动")
         self.v_url = tk.StringVar(value="—")
 
-        for v in (self.v_path, self.v_bind, self.v_port, self.v_prefix, self.v_hidden,
+        for v in (self.v_path, self.v_port, self.v_prefix, self.v_hidden,
                   self.v_render, self.v_logpath, self.v_cert, self.v_key, self.v_profile,
                   self.v_custom_ui, self.v_assets_dir, self.v_auth_user, self.v_auth_pass):
             v.trace_add("write", lambda *_: self._refresh_preview())
+
+    def selected_binds(self) -> list[str]:
+        bindlist = getattr(self, "bindlist", None)
+        if bindlist is not None:
+            # 以界面勾选为准：全部取消勾选时返回空列表，不能再回退到旧值
+            return bindlist.selected()
+        return list(self._pending_binds)
 
     def port_from_form(self) -> tuple[int | None, str]:
         """解析端口输入；无效时返回可读提示，不在编辑过程中抛异常。"""
@@ -62,9 +70,11 @@ class FormStateMixin:
 
     def current_config(self) -> ServerConfig:
         port, _ = self.port_from_form()
+        binds = self.selected_binds()
         return ServerConfig(
             share_path=self.v_path.get().strip(),
-            bind=self.v_bind.get().strip() or "127.0.0.1",
+            bind=binds[0] if binds else "",
+            binds=list(binds),
             # 编辑过程中允许暂时非法；用 5000 占位，提交时由 port_from_form 报错
             port=port if port is not None else 5000,
             path_prefix=self.v_prefix.get().strip(),
@@ -88,7 +98,10 @@ class FormStateMixin:
 
     def load_to_form(self, cfg: ServerConfig) -> None:
         self.v_path.set(cfg.share_path)
-        self.v_bind.set(cfg.bind)
+        self._pending_binds = cfg.effective_binds()
+        bindlist = getattr(self, "bindlist", None)
+        if bindlist is not None and bindlist.items:
+            bindlist.set_selection(self._pending_binds)
         self.v_port.set(str(cfg.port))
         self.v_prefix.set(cfg.path_prefix)
         self.v_upload.set(cfg.allow_upload)
