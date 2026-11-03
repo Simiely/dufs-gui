@@ -58,7 +58,7 @@ python main.py
 ## 测试
 
 ```bat
-python -m unittest discover -s tests   :: 117 项，1 项自动跳过（皮肤 jsdom E2E）
+python -m unittest discover -s tests   :: 127 项，1 项自动跳过（皮肤 jsdom E2E）
 ```
 
 Windows CI 见 [.github/workflows/windows-ci.yml](.github/workflows/windows-ci.yml)，

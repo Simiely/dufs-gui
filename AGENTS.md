@@ -49,7 +49,7 @@ build.bat              :: 打正式单文件 exe（dist\DufsGui-v1.5.0.exe）
 build_debug.bat        :: 诊断版：环境体检 + 控制台 + 抓输出（排错先跑它）
 run_debug.bat          :: 只运行已有 exe 并抓取全部输出
 python main.py         :: 源码直接跑
-python -m unittest discover -s tests   :: 跑全部测试（117 项，1 项 jsdom 跳过）
+python -m unittest discover -s tests   :: 跑全部测试（127 项，1 项 jsdom 跳过）
 ```
 
 Windows CI：`.github/workflows/windows-ci.yml`，Python 3.9 / 3.12 矩阵。
@@ -62,6 +62,6 @@ Windows CI：`.github/workflows/windows-ci.yml`，Python 3.9 / 3.12 矩阵。
 
 ## 平台限制
 
-Windows CI 已覆盖 117 项单测（Python 3.9 / 3.12；1 项 jsdom 皮肤 E2E 自动跳过），
+Windows CI 已覆盖 127 项单测（Python 3.9 / 3.12；1 项 jsdom 皮肤 E2E 自动跳过），
 并在本机验证过真实 Tk 窗口构造与端口输入。**GUI 的视觉观感、网页皮肤的实际效果
 仍需在真实 Windows 桌面上确认**，涉及视觉的判断一律以实机结果为准。

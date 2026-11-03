@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import stat
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 BINARY_NAME = "dufs.exe" if os.name == "nt" else "dufs"
@@ -212,3 +214,41 @@ def version(binary: Path) -> str:
         return (out.stdout or out.stderr).strip().splitlines()[0] if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError, IndexError):
         return ""
+
+
+def parse_version(text: str) -> str:
+    """从版本输出里取 主.次.修订；取不到返回空串。"""
+    m = re.search(r"(\d+\.\d+\.\d+)", text or "")
+    return m.group(1) if m else ""
+
+
+def assets_version(directory: str | os.PathLike | None = None) -> str:
+    """读取皮肤目录里的 ASSETS_VERSION；目录不存在或读失败时返回空串。"""
+    d = Path(directory) if directory else webui_dir()
+    if not d:
+        return ""
+    f = d / "ASSETS_VERSION"
+    try:
+        return f.read_text(encoding="utf-8").strip() if f.is_file() else ""
+    except OSError:
+        return ""
+
+
+@dataclass(frozen=True)
+class DufsInstall:
+    """一份可用的 dufs：路径 + 原始版本输出。"""
+
+    path: Path
+    version: str = ""
+
+    @property
+    def semver(self) -> str:
+        return parse_version(self.version)
+
+
+def describe(path: Path | None) -> DufsInstall | None:
+    """把路径与版本探测合并成一个结果；路径为空时返回 None。"""
+    if path is None:
+        return None
+    p = Path(path)
+    return DufsInstall(p, version(p))

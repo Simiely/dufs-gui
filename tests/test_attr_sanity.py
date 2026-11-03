@@ -21,6 +21,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 APP = REPO / "app.py"
+#: 界面代码已拆到 ui/（app.py 只保留窗口生命周期与启停编排），
+#: 静态检查必须覆盖全部界面文件，否则拆出去的文件里的拼写错误会漏检。
+UI_SOURCES = [APP] + sorted((REPO / "ui").glob("*.py"))
 
 #: tk.Tk / ttk.Frame 等基类自带的方法与 Tcl 命令，以及本类的方法名。
 #: 它们"用到了但没在本类赋值"是正常的，不应报错。
@@ -92,9 +95,21 @@ def _collect(path: Path) -> tuple[set[str], set[str], set[str]]:
 
 class AttrSanityTest(unittest.TestCase):
     def test_no_undefined_self_attrs(self):
-        """app.py 里用到的 self 属性必须已赋值，或是 Tk 内置 / 本类方法。"""
-        self.assertTrue(APP.is_file(), "缺少 app.py")
-        assigned, used, methods = _collect(APP)
+        """界面代码里用到的 self 属性必须已赋值，或是 Tk 内置 / 本类方法。
+
+        注意 app.py 与 ui/*.py 是同一个类的不同 mixin，属性可以互相赋值，
+        因此必须合并统计：分开检查会把合法的跨文件属性当成未定义。
+        """
+        for p in UI_SOURCES:
+            self.assertTrue(p.is_file(), f"缺少 {p.name}")
+        assigned: set[str] = set()
+        used: set[str] = set()
+        methods: set[str] = set()
+        for p in UI_SOURCES:
+            a, u, m = _collect(p)
+            assigned |= a
+            used |= u
+            methods |= m
         unknown = sorted(used - assigned - methods - TK_BUILTINS)
         self.assertEqual(
             [], unknown,
@@ -108,9 +123,12 @@ class AttrSanityTest(unittest.TestCase):
         注意用 AST 判据而不是文本搜索：文档字符串里提到这个错误写法是允许的
         （它正是用来警示后来者的），只有真实的属性访问才该被拦下。
         """
-        _assigned, used, _methods = _collect(APP)
+        used: set[str] = set()
+        for p in UI_SOURCES:
+            _assigned, u, _methods = _collect(p)
+            used |= u
         self.assertNotIn("assets_dir", used,
                          "不应访问 self.assets_dir —— 实际变量是 "
                          "self.v_assets_dir(tk.StringVar)")
-        src = APP.read_text(encoding="utf-8")
+        src = "\n".join(p.read_text(encoding="utf-8") for p in UI_SOURCES)
         self.assertIn("self.v_assets_dir = tk.StringVar", src)

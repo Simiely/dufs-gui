@@ -79,6 +79,9 @@ else:
 hiddenimports = [
     "core", "core.config", "core.dufsbin", "core.netutil", "core.server",
     "core.theme", "core.crashlog", "core.app_state", "core.winpos",
+    # 批次 2 拆分出的模块：显式声明，避免冻结环境漏收集
+    "core.launch", "core.runtime",
+    "ui", "ui.common", "ui.form", "ui.layout", "ui.advanced",
 ]
 
 # tkinter 子模块：显式声明比依赖自动分析更保险，但只在构建机真有 tkinter 时声明，

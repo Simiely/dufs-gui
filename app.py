@@ -1,44 +1,34 @@
-"""Dufs GUI 主界面（tkinter，深色模式优先）。"""
+"""Dufs GUI 主界面（tkinter，深色模式优先）。
+
+界面构建、表单状态、高级设置弹窗已拆到 ui/；启动决策在 core/launch.py；
+这里只保留窗口生命周期与启停编排。
+"""
 
 from __future__ import annotations
 
-import traceback
-import os
-import re
 import queue
 import time
-import sys
 import tkinter as tk
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
-from tkinter.scrolledtext import ScrolledText
 
 from core import dufsbin
-from core.theme import ThemedCheckbutton, ThemedCombobox
-from core.winpos import center_on_parent
-from core.config import (AppConfig, RENDER_MODES, ServerConfig, load_config,
-                         save_config, config_file)
+from core.config import (AppConfig, ServerConfig, load_config, save_config,
+                         config_file)
 from core.health import HealthMonitor
+from core.launch import build_launch_plan
 from core.netutil import find_free_port, local_ips, port_in_use
-from core.server import DufsProcess
+from core.runtime import DufsRuntime
 from core.theme import apply_theme, enable_windows_dark_titlebar, palette
-
-APP_NAME = "Dufs 文件共享"
 from core import APP_VERSION  # 单一真源，见 core/__init__.py
+from ui.advanced import AdvancedDialogMixin
+from ui.common import APP_NAME
+from ui.form import FormStateMixin
+from ui.layout import MainLayoutMixin
 
 
-def ui_font(size: int = 10, weight: str = "normal") -> tuple:
-    if os.name == "nt":
-        family = "Microsoft YaHei UI"
-    elif sys.platform == "darwin":
-        family = "PingFang SC"
-    else:
-        family = "Noto Sans CJK SC"
-    return (family, size, weight)
-
-
-class DufsGui(tk.Tk):
+class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_NAME}  v{APP_VERSION}")
@@ -50,9 +40,8 @@ class DufsGui(tk.Tk):
         self.colors = palette(self.dark)
 
         self.log_queue: queue.Queue = queue.Queue()
-        self.proc = DufsProcess(self.log_queue)
-
-        self.dufs_path: Path | None = dufsbin.find_dufs()
+        self.runtime = DufsRuntime(self.log_queue)
+        self.runtime.locate()
         self.health: HealthMonitor | None = None
         self.adv_win: tk.Toplevel | None = None
         self._adv_canvas: tk.Canvas | None = None
@@ -67,463 +56,11 @@ class DufsGui(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(150, self._drain_queues)
 
-    # ---------------- 变量 ----------------
-    def _build_vars(self) -> None:
-        self.v_path = tk.StringVar(value="")
-        self.v_bind = tk.StringVar(value="127.0.0.1")
-        # 用字符串输入：IntVar 在清空/输入非数字时 .get() 会抛 TclError，
-        # 而 v_port 绑了 trace，用户在编辑框里删字就会触发错误弹窗。
-        self.v_port = tk.StringVar(value="5000")
-        self.v_prefix = tk.StringVar(value="")
-        self.v_upload = tk.BooleanVar(value=True)
-        self.v_delete = tk.BooleanVar(value=False)
-        self.v_search = tk.BooleanVar(value=True)
-        self.v_archive = tk.BooleanVar(value=True)
-        self.v_symlink = tk.BooleanVar(value=False)
-        self.v_cors = tk.BooleanVar(value=False)
-        self.v_custom_ui = tk.BooleanVar(value=True)
-        self.v_assets_dir = tk.StringVar(value="")
-        self.v_hidden = tk.StringVar(value="")
-        self.v_render = tk.StringVar(value="自动列表（默认）")
-        self.v_savelog = tk.BooleanVar(value=False)
-        self.v_logpath = tk.StringVar(value="")
-        self.v_cert = tk.StringVar(value="")
-        self.v_key = tk.StringVar(value="")
-        self.v_auth_user = tk.StringVar(value="")
-        self.v_auth_pass = tk.StringVar(value="")
-        self.v_dufs = tk.StringVar(value="")
-        self.v_profile = tk.StringVar(value="")
-        self.v_status = tk.StringVar(value="未启动")
-        self.v_url = tk.StringVar(value="—")
+    @property
+    def proc(self):
+        """兼容旧代码/测试：进程对象由 DufsRuntime 统一持有。"""
+        return self.runtime.process
 
-        for v in (self.v_path, self.v_bind, self.v_port, self.v_prefix, self.v_hidden,
-                  self.v_render, self.v_logpath, self.v_cert, self.v_key, self.v_profile,
-                  self.v_custom_ui, self.v_assets_dir, self.v_auth_user, self.v_auth_pass):
-            v.trace_add("write", lambda *_: self._refresh_preview())
-
-    def port_from_form(self) -> tuple[int | None, str]:
-        """解析端口输入；无效时返回可读提示，不在编辑过程中抛异常。"""
-        raw = str(self.v_port.get() or "").strip()
-        if not raw:
-            return None, "端口不能为空"
-        try:
-            port = int(raw)
-        except ValueError:
-            return None, "端口必须是 1-65535 的整数"
-        if not 1 <= port <= 65535:
-            return None, "端口需在 1-65535 之间"
-        return port, ""
-
-    def current_config(self) -> ServerConfig:
-        port, _ = self.port_from_form()
-        return ServerConfig(
-            share_path=self.v_path.get().strip(),
-            bind=self.v_bind.get().strip() or "127.0.0.1",
-            # 编辑过程中允许暂时非法；用 5000 占位，提交时由 port_from_form 报错
-            port=port if port is not None else 5000,
-            path_prefix=self.v_prefix.get().strip(),
-            allow_upload=self.v_upload.get(),
-            allow_delete=self.v_delete.get(),
-            allow_search=self.v_search.get(),
-            allow_archive=self.v_archive.get(),
-            allow_symlink=self.v_symlink.get(),
-            enable_cors=self.v_cors.get(),
-            custom_ui=self.v_custom_ui.get(),
-            assets_dir=self.v_assets_dir.get(),
-            hidden=self.v_hidden.get().strip(),
-            render_mode=self.v_render.get(),
-            save_log=self.v_savelog.get(),
-            log_path=self.v_logpath.get().strip(),
-            tls_cert=self.v_cert.get().strip(),
-            tls_key=self.v_key.get().strip(),
-            auth_user=self.v_auth_user.get().strip(),
-            auth_pass=self.v_auth_pass.get(),
-        )
-
-    def load_to_form(self, cfg: ServerConfig) -> None:
-        self.v_path.set(cfg.share_path)
-        self.v_bind.set(cfg.bind)
-        self.v_port.set(str(cfg.port))
-        self.v_prefix.set(cfg.path_prefix)
-        self.v_upload.set(cfg.allow_upload)
-        self.v_delete.set(cfg.allow_delete)
-        self.v_search.set(cfg.allow_search)
-        self.v_archive.set(cfg.allow_archive)
-        self.v_symlink.set(cfg.allow_symlink)
-        self.v_cors.set(cfg.enable_cors)
-        self.v_custom_ui.set(cfg.custom_ui)
-        self.v_assets_dir.set(cfg.assets_dir)
-        self.v_hidden.set(cfg.hidden)
-        self.v_render.set(cfg.render_mode)
-        self.v_savelog.set(cfg.save_log)
-        self.v_logpath.set(cfg.log_path)
-        self.v_cert.set(cfg.tls_cert)
-        self.v_key.set(cfg.tls_key)
-        self.v_auth_user.set(cfg.auth_user)
-        self.v_auth_pass.set(cfg.auth_pass)
-
-    # ---------------- 界面 ----------------
-    def _build_ui(self) -> None:
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
-
-        header = ttk.Frame(self, padding=(18, 14, 18, 8))
-        header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(0, weight=1)
-        ttk.Label(header, text=APP_NAME, style="Title.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="先配置，再开启 · 基于 dufs 的轻量文件共享",
-                  style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 0))
-        self.btn_theme = ttk.Button(header, text="浅色", width=8, command=self._toggle_theme)
-        self.btn_theme.grid(row=0, column=1, rowspan=2, sticky="e")
-
-        body = ttk.Frame(self, padding=(14, 4, 14, 4))
-        body.grid(row=1, column=0, sticky="nsew")
-        body.columnconfigure(0, weight=3, uniform="col")
-        body.columnconfigure(1, weight=4, uniform="col")
-        body.rowconfigure(0, weight=1)
-
-        left = ttk.Frame(body)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        left.columnconfigure(0, weight=1)
-        right = ttk.Frame(body)
-        right.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        right.columnconfigure(0, weight=1)
-        right.rowconfigure(1, weight=1)
-
-        self._build_profile_section(left, 0)
-        self._build_path_section(left, 1)
-        self._build_net_section(left, 2)
-        self._build_perm_section(left, 3)
-        self._build_advanced_section(left, 4)
-
-        self._build_status_section(right, 0)
-        self._build_log_section(right, 1)
-
-        self._build_footer()
-
-    def _section(self, parent: ttk.Frame, row: int, title: str) -> ttk.Frame:
-        box = ttk.LabelFrame(parent, text=title, padding=(12, 8, 12, 10))
-        box.grid(row=row, column=0, sticky="ew", pady=(0, 10))
-        box.columnconfigure(1, weight=1)
-        return box
-
-    def _build_profile_section(self, parent: ttk.Frame, row: int) -> None:
-        box = self._section(parent, row, "配置方案（可保存多套目录/端口，随时切换）")
-        ttk.Label(box, text="方案", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
-        self.cmb_profile = ThemedCombobox(box, textvariable=self.v_profile, state="readonly")
-        self.cmb_profile.grid(row=0, column=1, sticky="ew", padx=6)
-        self.cmb_profile.bind("<<ComboboxSelected>>", lambda e: self._switch_profile())
-        btns = ttk.Frame(box)
-        btns.grid(row=0, column=2, sticky="e")
-        ttk.Button(btns, text="保存", width=6,
-                   command=self._save_profile).pack(side="left", padx=2)
-        ttk.Button(btns, text="删除", width=6,
-                   command=self._delete_profile).pack(side="left", padx=2)
-        self.config_widgets += [self.cmb_profile]
-
-    def _build_path_section(self, parent: ttk.Frame, row: int) -> None:
-        box = self._section(parent, row, "共享目录")
-        self.ent_path = ttk.Entry(box, textvariable=self.v_path)
-        self.ent_path.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
-        self.btn_browse = ttk.Button(box, text="选择目录…", command=self._browse_dir)
-        self.btn_browse.grid(row=0, column=2, padx=(6, 0))
-        ttk.Label(box, text="最近使用", style="Muted.TLabel").grid(row=1, column=0, sticky="w")
-        self.cmb_recent = ThemedCombobox(box, state="readonly", values=[])
-        self.cmb_recent.grid(row=1, column=1, sticky="ew", padx=6)
-        self.cmb_recent.bind("<<ComboboxSelected>>", self._use_recent)
-        ttk.Label(box, text="要分享单个文件时，直接在上面填文件的完整路径即可",
-                  style="Muted.TLabel").grid(row=2, column=0, columnspan=3, sticky="w",
-                                             pady=(6, 0))
-        self.config_widgets += [self.ent_path, self.btn_browse, self.cmb_recent]
-
-    def _build_net_section(self, parent: ttk.Frame, row: int) -> None:
-        box = self._section(parent, row, "网络与接口")
-        ttk.Label(box, text="监听地址", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
-        self.cmb_bind = ThemedCombobox(box, textvariable=self.v_bind, width=18)
-        self.cmb_bind.grid(row=0, column=1, sticky="w", padx=6)
-        self.cmb_bind.bind("<<ComboboxSelected>>", lambda e: self._on_bind_change())
-
-        ttk.Label(box, text="端口", style="Muted.TLabel").grid(row=0, column=2, sticky="w")
-        self.ent_port = ttk.Entry(box, textvariable=self.v_port, width=8)
-        self.ent_port.grid(row=0, column=3, sticky="w", padx=6)
-        self.btn_port = ttk.Button(box, text="检测", width=6, command=self._check_port)
-        self.btn_port.grid(row=0, column=4)
-
-        ttk.Label(box, text="路径前缀", style="Muted.TLabel").grid(row=1, column=0, sticky="w",
-                                                                 pady=(8, 0))
-        self.ent_prefix = ttk.Entry(box, textvariable=self.v_prefix)
-        self.ent_prefix.grid(row=1, column=1, columnspan=3, sticky="ew", padx=6, pady=(8, 0))
-        ttk.Label(box, text="留空则用 / ；填 files 会变成 http://ip:5000/files/",
-                  style="Muted.TLabel").grid(row=2, column=0, columnspan=5, sticky="w",
-                                            pady=(4, 0))
-        self.config_widgets += [self.cmb_bind, self.ent_port, self.btn_port, self.ent_prefix]
-
-    def _build_perm_section(self, parent: ttk.Frame, row: int) -> None:
-        box = self._section(parent, row, "网页端能力")
-        items = [
-            (self.v_upload, "允许上传", "网页端可拖拽上传；关闭后为纯只读分享"),
-            (self.v_delete, "允许删除", "网页端显示删除按钮并可删除文件/文件夹"),
-            (self.v_search, "允许搜索", "网页端显示搜索框"),
-            (self.v_archive, "打包下载", "文件夹可下载为 zip"),
-            (self.v_symlink, "允许符号链接", "可访问指向共享目录之外的链接（有越权风险）"),
-            (self.v_cors, "启用 CORS", "允许跨域访问，前端直连时需要"),
-            (self.v_custom_ui, "网页美化界面", "替换 dufs 默认页面样式（自研皮肤，不影响功能）"),
-        ]
-        for i, (var, text, hint) in enumerate(items):
-            cb = ThemedCheckbutton(box, text=text, variable=var, bg_key="panel",
-                                   command=lambda v=var, t=text: self._on_perm_change(v, t))
-            cb.grid(row=i, column=0, sticky="w")
-            ttk.Label(box, text=hint, style="Muted.TLabel").grid(row=i, column=1, sticky="w",
-                                                                padx=(10, 0))
-            self.config_widgets.append(cb)
-        box.columnconfigure(1, weight=1)
-
-    def _build_advanced_section(self, parent: ttk.Frame, row: int) -> None:
-        """高级设置只放一个入口按钮，具体内容在弹窗里（避免主界面被撑破）。"""
-        holder = ttk.Frame(parent)
-        holder.grid(row=row, column=0, sticky="ew")
-        holder.columnconfigure(1, weight=1)
-        self.btn_adv = ttk.Button(holder, text="高级设置…", command=self._open_advanced)
-        self.btn_adv.grid(row=0, column=0, sticky="w")
-        ttk.Label(holder, text="隐藏规则 / 渲染模式 / 日志 / HTTPS / 访问口令 / dufs 程序",
-                  style="Muted.TLabel").grid(row=0, column=1, sticky="w", padx=12)
-
-    def _open_advanced(self) -> None:
-        """打开高级设置弹窗。已打开则直接置顶。"""
-        if self.adv_win is not None and self.adv_win.winfo_exists():
-            self.adv_win.lift()
-            self.adv_win.focus_force()
-            return
-
-        win = tk.Toplevel(self)
-        win.title("高级设置")
-        win.transient(self)
-        # 先 withdraw，等尺寸算完再显示：否则会先闪一下默认位置（多屏时尤其明显）
-        win.withdraw()
-        self.adv_win = win
-        apply_theme(win, self.dark)          # 弹窗跟随当前深浅主题
-        win.configure(bg=self.colors["bg"])
-        win.columnconfigure(0, weight=1)
-        win.rowconfigure(0, weight=1)
-
-        # 可滚动容器：内容超过窗口高度时不会裁切，屏幕矮也能完整操作
-        wrap = ttk.Frame(win)
-        wrap.grid(row=0, column=0, sticky="nsew")
-        wrap.columnconfigure(0, weight=1)
-        wrap.rowconfigure(0, weight=1)
-
-        canvas = tk.Canvas(wrap, highlightthickness=0, borderwidth=0,
-                           bg=self.colors["bg"])
-        canvas.grid(row=0, column=0, sticky="nsew")
-        self._adv_canvas = canvas
-        sb = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
-        sb.grid(row=0, column=1, sticky="ns")
-        canvas.configure(yscrollcommand=sb.set)
-
-        outer = ttk.Frame(canvas, padding=16)
-        outer.columnconfigure(1, weight=1)
-        win_id = canvas.create_window((0, 0), window=outer, anchor="nw")
-
-        def _sync_scroll(_e=None) -> None:
-            try:
-                canvas.configure(scrollregion=canvas.bbox("all"))
-            except Exception:
-                pass
-
-        def _fit_width(e) -> None:
-            try:
-                canvas.itemconfigure(win_id, width=e.width)
-            except Exception:
-                pass
-
-        outer.bind("<Configure>", _sync_scroll)
-        canvas.bind("<Configure>", _fit_width)
-
-        def _wheel(e) -> None:
-            try:
-                canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
-            except Exception:
-                pass
-
-        def row_label(text: str, r: int) -> None:
-            ttk.Label(outer, text=text, style="Muted.TLabel").grid(
-                row=r, column=0, sticky="w", pady=(10, 0))
-
-        # 隐藏规则
-        row_label("隐藏规则", 0)
-        e1 = ttk.Entry(outer, textvariable=self.v_hidden)
-        e1.grid(row=0, column=1, columnspan=2, sticky="ew", padx=8, pady=(10, 0))
-        ttk.Label(outer, text="逗号分隔，支持通配，如 .git,*.log,tmp",
-                  style="Muted.TLabel").grid(row=1, column=1, columnspan=2,
-                                             sticky="w", padx=8, pady=(2, 0))
-
-        # 渲染模式
-        row_label("渲染模式", 2)
-        c1 = ThemedCombobox(outer, textvariable=self.v_render, state="readonly",
-                            values=list(RENDER_MODES), width=30)
-        c1.grid(row=2, column=1, sticky="w", padx=8, pady=(10, 0))
-
-        # 日志
-        cblog = ThemedCheckbutton(outer, text="同时保存日志到文件", bg_key="panel",
-                                  variable=self.v_savelog,
-                                  command=self._on_savelog_change)
-        cblog.grid(row=3, column=0, columnspan=3, sticky="w", pady=(14, 0))
-        e2 = ttk.Entry(outer, textvariable=self.v_logpath)
-        e2.grid(row=4, column=1, sticky="ew", padx=8, pady=(4, 0))
-        ttk.Button(outer, text="选择…", width=8, command=self._pick_log).grid(
-            row=4, column=2, padx=(6, 0), pady=(4, 0))
-
-        # HTTPS
-        row_label("HTTPS 证书", 5)
-        e3 = ttk.Entry(outer, textvariable=self.v_cert)
-        e3.grid(row=5, column=1, sticky="ew", padx=8, pady=(10, 0))
-        ttk.Button(outer, text="选择…", width=8, command=self._pick_cert).grid(
-            row=5, column=2, padx=(6, 0), pady=(10, 0))
-
-        row_label("私钥", 6)
-        e4 = ttk.Entry(outer, textvariable=self.v_key)
-        e4.grid(row=6, column=1, sticky="ew", padx=8, pady=(4, 0))
-        ttk.Button(outer, text="选择…", width=8, command=self._pick_key).grid(
-            row=6, column=2, padx=(6, 0), pady=(4, 0))
-
-        # 访问口令（dufs -a user:pass@/:rw）
-        row_label("访问口令（用户名）", 7)
-        e_auth_user = ttk.Entry(outer, textvariable=self.v_auth_user)
-        e_auth_user.grid(row=7, column=1, sticky="ew", padx=8, pady=(10, 0))
-        row_label("密码", 8)
-        self.ent_auth_pass = ttk.Entry(outer, textvariable=self.v_auth_pass,
-                                       show="*")
-        self.ent_auth_pass.grid(row=8, column=1, sticky="ew", padx=8, pady=(4, 0))
-        ttk.Label(outer,
-                  text="留空表示不鉴权；非回环监听必须设置口令；口令明文保存在配置文件中",
-                  style="Muted.TLabel").grid(row=9, column=1, columnspan=2,
-                                             sticky="w", padx=8, pady=(2, 0))
-
-        # 网页皮肤目录
-        row_label("网页皮肤目录", 10)
-        ttk.Entry(outer, textvariable=self.v_assets_dir).grid(
-            row=10, column=1, sticky="ew", padx=8, pady=(10, 0))
-        ttk.Button(outer, text="选择…", width=8, command=self._pick_assets).grid(
-            row=10, column=2, padx=(6, 0), pady=(10, 0))
-        ttk.Label(outer, text="留空用内置皮肤；也可指向第三方皮肤包（须含 index.html）",
-                  style="Muted.TLabel").grid(row=11, column=1, columnspan=2,
-                                             sticky="w", padx=8, pady=(2, 0))
-
-        # dufs 程序
-        row_label("dufs 程序", 12)
-        e5 = ttk.Entry(outer, textvariable=self.v_dufs, state="readonly")
-        e5.grid(row=12, column=1, sticky="ew", padx=8, pady=(10, 0))
-        ttk.Button(outer, text="更换…", width=8, command=self._pick_dufs).grid(
-            row=12, column=2, padx=(6, 0), pady=(10, 0))
-
-        # 底部提示 + 关闭
-        hint = ttk.Frame(outer)
-        hint.grid(row=13, column=0, columnspan=3, sticky="ew", pady=(18, 0))
-        hint.columnconfigure(0, weight=1)
-        self.lbl_adv_hint = ttk.Label(hint, text="", style="Muted.TLabel",
-                                      font=ui_font(9))
-        self.lbl_adv_hint.grid(row=0, column=0, sticky="w")
-        ttk.Button(hint, text="关闭", width=10, command=win.destroy).grid(row=0, column=1)
-        self._refresh_adv_hint()
-
-        def on_close():
-            self.adv_win = None
-            self._adv_canvas = None
-            win.destroy()
-
-        win.protocol("WM_DELETE_WINDOW", on_close)
-
-        # 鼠标滚轮：需要绑到每个子控件，否则指针停在输入框上时滚不动
-        def _bind_wheel(w) -> None:
-            try:
-                w.bind("<MouseWheel>", _wheel)
-                for c in w.winfo_children():
-                    _bind_wheel(c)
-            except Exception:
-                pass
-
-        _bind_wheel(outer)
-        canvas.bind("<MouseWheel>", _wheel)
-
-        # 固定一个足够大的尺寸，再用滚动兜底。
-        # 不能依赖 winfo_reqheight()：窗口此时是 withdrawn 状态，Tk 不会计算
-        # 子控件几何，reqheight 常常返回 1，算出来的高度反而更小、裁得更狠。
-        try:
-            sh = win.winfo_screenheight()
-            sw = win.winfo_screenwidth()
-        except Exception:
-            sh, sw = 1080, 1920
-        h = max(520, min(760, sh - 120))
-        w = max(640, min(720, sw - 80))
-        win.minsize(min(640, w), min(480, h))
-        win.geometry(f"{w}x{h}")
-        center_on_parent(win, self, w, h)
-        _sync_scroll()
-
-        win.deiconify()
-        win.grab_set()
-        win.focus_force()
-
-    def _refresh_adv_hint(self) -> None:
-        if self.proc.running:
-            self.lbl_adv_hint.configure(
-                text="服务运行中，此处修改将在停止后重新开启才生效")
-        else:
-            self.lbl_adv_hint.configure(text="修改会在下次开启共享时生效")
-
-    def _build_status_section(self, parent: ttk.Frame, row: int) -> None:
-        card = ttk.LabelFrame(parent, text="服务状态", padding=(12, 10))
-        card.grid(row=row, column=0, sticky="ew", pady=(0, 10))
-        card.columnconfigure(1, weight=1)
-        self.dot = tk.Label(card, text="●", font=ui_font(13), bg=self.colors["panel"],
-                            fg=self.colors["muted"])
-        self.dot.grid(row=0, column=0, rowspan=2, padx=(0, 10))
-        self.lbl_status = ttk.Label(card, textvariable=self.v_status, style="Card.TLabel",
-                                    font=ui_font(11, "bold"))
-        self.lbl_status.grid(row=0, column=1, sticky="w")
-        ttk.Label(card, textvariable=self.v_url, style="MutedCard.TLabel",
-                  font=ui_font(10)).grid(row=1, column=1, sticky="w", pady=(2, 0))
-        ops = ttk.Frame(card)
-        ops.grid(row=0, column=2, rowspan=2, sticky="e")
-        self.btn_open = ttk.Button(ops, text="打开网页", width=10, command=self._open_browser)
-        self.btn_open.pack(side="left", padx=3)
-        self.btn_copy = ttk.Button(ops, text="复制地址", width=10, command=self._copy_url)
-        self.btn_copy.pack(side="left", padx=3)
-
-    def _build_log_section(self, parent: ttk.Frame, row: int) -> None:
-        box = ttk.LabelFrame(parent, text="运行日志", padding=(12, 8))
-        box.grid(row=row, column=0, sticky="nsew", pady=(0, 10))
-        box.columnconfigure(0, weight=1)
-        box.rowconfigure(0, weight=1)
-        self.log_text = ScrolledText(box, height=10, wrap="none", relief="flat",
-                                     font=("Consolas", 10))
-        self.log_text.grid(row=0, column=0, sticky="nsew")
-        self.log_text.configure(state="disabled")
-        ops = ttk.Frame(box)
-        ops.grid(row=1, column=0, sticky="e", pady=(6, 0))
-        ttk.Button(ops, text="清空", width=8, command=self._clear_log).pack(side="left", padx=3)
-        ttk.Button(ops, text="导出…", width=8, command=self._export_log).pack(side="left", padx=3)
-
-    def _build_footer(self) -> None:
-        footer = ttk.Frame(self, padding=(14, 6, 14, 14))
-        footer.grid(row=2, column=0, sticky="ew")
-        footer.columnconfigure(0, weight=1)
-        self.lbl_cmd = ttk.Label(footer, text="", style="Muted.TLabel",
-                                 font=("Consolas", 9), justify="left", anchor="w")
-        self.lbl_cmd.grid(row=0, column=0, sticky="w")
-        # 写死 wraplength 会与标签实际宽度不符：换行位置错乱，命令被截成怪样子。
-        # 改为按标签真实宽度自适应。
-        self.lbl_cmd.bind(
-            "<Configure>",
-            lambda e: self.lbl_cmd.configure(wraplength=max(160, e.width - 4)))
-        self.btn_start = ttk.Button(footer, text="开启共享", style="Accent.TButton",
-                                    command=self._start)
-        self.btn_start.grid(row=0, column=1, rowspan=2, padx=(10, 0))
-        self.btn_stop = ttk.Button(footer, text="停止", style="Danger.TButton",
-                                   command=self._stop, state="disabled")
-        self.btn_stop.grid(row=0, column=2, padx=(6, 0))
-
-    # ---------------- 异常 ----------------
     def report_callback_exception(self, exc, val, tb) -> None:
         """tkinter 事件回调里的异常默认只打到 stderr，隐藏控制台后完全看不见。
 
@@ -639,9 +176,7 @@ class DufsGui(tk.Tk):
         if err:
             messagebox.showwarning("端口无效", err)
             return
-        host = self.v_bind.get().strip() or "127.0.0.1"
-        if host in ("0.0.0.0", "::", "[::]"):
-            host = "127.0.0.1"
+        host = self.current_config().check_host()
         if port_in_use(port, host):
             free = find_free_port(port, host)
             if messagebox.askyesno("端口已被占用",
@@ -686,12 +221,12 @@ class DufsGui(tk.Tk):
         if not p:
             return
         try:
-            self.dufs_path = dufsbin.install_custom(p)
+            info = self.runtime.adopt(p)
         except OSError as e:
             messagebox.showerror("无法使用", str(e))
             return
-        self.v_dufs.set(str(self.dufs_path))
-        self._log(f"已更换 dufs：{self.dufs_path}")
+        self.v_dufs.set(str(info.path))
+        self._log(f"已更换 dufs：{info.path}")
 
     def _refresh_preview(self) -> None:
         cfg = self.current_config()
@@ -736,18 +271,20 @@ class DufsGui(tk.Tk):
         save_config(self.app_cfg)
 
     def _restore(self) -> None:
+        if self.app_cfg.notice:
+            self._log(f"配置：{self.app_cfg.notice}")
         self.load_to_form(ServerConfig.from_dict(self.app_cfg.current_config))
         if self.v_path.get():
             self._add_recent(self.v_path.get())
         self.cmb_bind.configure(values=["127.0.0.1", "0.0.0.0"] + local_ips())
         self.cmb_recent.configure(values=self.app_cfg.recent_paths)
         self._reload_profiles(self.app_cfg.current)
-        if self.dufs_path is None:
+        info = self.runtime.info
+        if info is None:
             self._log("未找到 dufs 可执行文件，请在高级设置里手动指定，或运行 tools/fetch_dufs.py 下载")
         else:
-            self.v_dufs.set(str(self.dufs_path))
-            v = dufsbin.version(self.dufs_path)
-            self._log(f"dufs 就绪：{self.dufs_path}" + (f"（{v}）" if v else ""))
+            self.v_dufs.set(str(info.path))
+            self._log(f"dufs 就绪：{info.path}" + (f"（{info.version}）" if info.version else ""))
 
     # ---------------- 启停 ----------------
     def _set_config_enabled(self, enabled: bool) -> None:
@@ -762,145 +299,76 @@ class DufsGui(tk.Tk):
 
     def _start(self) -> None:
         cfg = self.current_config()
-        errs = cfg.validate()
+
+        # 先做配置校验与口令日志：此时还不碰 dufs，失败可以立刻返回
+        plan = build_launch_plan(cfg, diagnose_skin=False)
+        errs = list(plan.errors)
         _, port_err = self.port_from_form()
         if port_err:
             errs.insert(0, port_err)
         if errs:
             messagebox.showerror("配置有误", "\n".join(errs))
             return
+        self._log(plan.auth_log)
 
-        if cfg.auth_pass:
-            self._log(f"访问口令：已启用（用户名 {cfg.auth_user.strip()}）")
-        else:
-            self._log("访问口令：未启用（仅允许回环监听）")
-
-        binary = dufsbin.ensure_dufs()
-        if binary is None:
+        info = self.runtime.ensure()
+        if info is None:
             if messagebox.askyesno("缺少 dufs",
                                    "没有找到 dufs 可执行文件。\n是否手动选择 dufs.exe？"):
                 p = filedialog.askopenfilename(title="选择 dufs.exe")
-                if p:
-                    binary = dufsbin.install_custom(p)
-                else:
+                if not p:
                     return
+                info = self.runtime.adopt(p)
             else:
                 return
-        self.dufs_path = binary
 
-        # ---- 皮肤诊断 ----
+        # ---- 皮肤诊断：决策与文案都在 core/launch.py，这里只负责写日志 ----
         # dufs 在 --assets 目录不含 index.html 时**不报错**，而是静默回退内置界面，
-        # 用户看到"皮肤没生效"却毫无线索。这里在启动前自己核验并写清结论。
-        #
-        # 目录优先级：用户在高级设置里指定的外部目录 > 内置皮肤目录
-        # 皮肤诊断分两步，**必须分开说**：
-        #   1) 目录本身是否可用 —— 只是"文件在不在"
-        #   2) --assets 是否真的进了命令行 —— 才是"会不会生效"
-        # 曾把 1) 单独当作结论打印，导致"核验通过但皮肤没生效"这种自相矛盾的日志：
-        # 目录明明是好的，但 cfg.custom_ui 为 False，--assets 压根没传。
-        from core.dufsbin import verify_assets_dir
+        # 用户看到"皮肤没生效"却毫无线索。启动前自己核验并写清结论。
+        plan = build_launch_plan(
+            cfg, binary=info.path, dufs_version=self.runtime.semver,
+            skin_dir=self.skin_dir(), skin_version=dufsbin.assets_version(),
+            config_path=str(config_file()))
+        for line in plan.skin_logs:
+            self._log(line)
 
-        _args = cfg.to_args()
-        _skin_arg = ""
-        for _i, _a in enumerate(_args):
-            if _a == "--assets" and _i + 1 < len(_args):
-                _skin_arg = _args[_i + 1]
-                break
-
-        try:
-            _ok, _msg = verify_assets_dir(self.skin_dir() or None)
-            self._log(("网页皮肤：目录核验通过 " if _ok else "网页皮肤：目录不可用 —— ") + _msg)
-        except Exception as e:  # noqa: BLE001
-            _tb = traceback.format_exc().strip().splitlines()
-            _loc = _tb[-2].strip() if len(_tb) >= 2 else "未知位置"
-            self._log(f"网页皮肤：核验异常（{_loc}）{type(e).__name__}: {e}")
-
-        if _skin_arg:
-            self._log(f"网页皮肤：已加入 --assets → {_skin_arg}")
-        else:
-            # custom_ui 的实际值来自 %APPDATA%\DufsGui\config.json，会覆盖代码默认值。
-            # 旧版在"皮肤启动失败自动降级"时把它写成 false 并存盘，
-            # 一次失败 = 永久关闭。现在降级已不写盘，但**已存在的旧值不会被自动清掉**。
-            try:
-                _cf = str(config_file())
-            except Exception:  # noqa: BLE001
-                _cf = "config.json"
-            self._log("网页皮肤：本次未传 --assets，网页将是 dufs 默认界面\n"
-                      "              原因：配置中 custom_ui=false（勾选「网页美化界面」即可启用）\n"
-                      "              该值存于 " + _cf + "，删除此文件可恢复默认")
-            if cfg.share_path.strip() and os.path.isfile(cfg.share_path):
-                self._log("提示：共享的是单个文件，dufs 会绕过 index.html 模板，皮肤不生效（官方行为）")
-
-        # 官方限制：serve-path 传文件（而非目录）时 index.html 模板被完全绕过，
-        # 皮肤必然不生效。提前说明，避免用户以为是皮肤坏了。
-        if cfg.share_path.strip() and os.path.isfile(cfg.share_path):
-            self._log("提示：共享的是单个文件，dufs 会绕过 index.html 模板，皮肤不生效（官方行为）")
-
-        # 皮肤版本与 dufs 版本不一致时，DOM / 数据契约可能变化
-        try:
-            from core.dufsbin import version as _vfn, webui_dir as _wd3
-            _d3 = _wd3()
-            if _d3:
-                _av = _d3 / "ASSETS_VERSION"
-                _skin_v = _av.read_text(encoding="utf-8").strip() if _av.is_file() else ""
-                _dv = ""
-                if self.dufs_path:
-                    _m2 = re.search(r"(\d+\.\d+\.\d+)", _vfn(self.dufs_path) or "")
-                    _dv = _m2.group(1) if _m2 else ""
-                if _skin_v and _dv and _skin_v != _dv:
-                    self._log(f"提示：网页皮肤版本 {_skin_v} 与 dufs {_dv} 不一致；"
-                              "升级皮肤需先更新 tools/skin_checksums.json，"
-                              "再执行 python tools/fetch_skin.py")
-        except Exception:  # noqa: BLE001
-            pass
-
-        # custom_ui 的实际值来自 %APPDATA%\DufsGui\config.json，会覆盖程序默认值
-        if not cfg.custom_ui:
-            try:
-                _cf = str(config_file())
-            except Exception:  # noqa: BLE001
-                _cf = "config.json"
-            self._log("网页皮肤：未启用（配置中 custom_ui=false）；"
-                      "勾选「网页美化界面」即可启用\n"
-                      "              若想彻底恢复默认，删除配置文件：" + _cf)
-
-        host_check = "127.0.0.1" if cfg.bind in ("0.0.0.0", "::", "[::]") else cfg.bind
-        if port_in_use(cfg.port, host_check):
-            free = find_free_port(cfg.port, host_check)
+        if port_in_use(cfg.port, plan.host_check):
+            free = find_free_port(cfg.port, plan.host_check)
             if not messagebox.askyesno("端口被占用",
                                        f"端口 {cfg.port} 已被占用，改用 {free} 启动？"):
                 return
             self.v_port.set(str(free))
             cfg.port = free
+            # 端口变了，参数/URL 必须重算；皮肤日志不重复
+            plan = build_launch_plan(cfg, binary=info.path, diagnose_skin=False)
 
         if cfg.allow_symlink and not messagebox.askyesno(
                 "安全提示", "允许符号链接可能暴露共享目录之外的文件，确定开启？"):
             return
 
-        args = cfg.to_args()
+        args = list(plan.args)
         try:
-            self.proc.start(binary, args)
+            self.proc.start(info.path, args)
         except Exception as e:  # noqa: BLE001
             messagebox.showerror("启动失败", str(e))
             return
 
-        if not self.proc.wait_ready(cfg.port, host_check, timeout=8):
+        if not self.proc.wait_ready(cfg.port, plan.host_check, timeout=8):
             out = self.proc.recent_output()
             self.proc.stop()
 
             # 若带了 --assets（自定义网页皮肤），很可能是它导致启动失败：
             # 自动去掉重试一次，保证皮肤永远不会挡住共享本身。
             retried = False
-            if "--assets" in args and cfg.custom_ui:
+            if plan.fallback_args is not None:
                 self._log("首次启动未就绪，尝试不带自定义网页皮肤重新启动…")
-                # 只改本次启动用的临时配置，**不能动界面变量**：
+                # 只改本次启动参数，**不能动界面变量**：
                 # 界面变量会在 _start() 末尾被 _save() 持久化，一旦改成 False，
                 # 就会被当成“用户主动关闭”写进 config.json，下次启动不再自愈。
-                cfg.custom_ui = False
-                args = cfg.to_args()
+                args = list(plan.fallback_args)
                 try:
-                    self.proc.start(binary, args)
-                    retried = self.proc.wait_ready(cfg.port, host_check, timeout=8)
+                    self.proc.start(info.path, args)
+                    retried = self.proc.wait_ready(cfg.port, plan.host_check, timeout=8)
                 except Exception:  # noqa: BLE001
                     retried = False
 
@@ -922,7 +390,7 @@ class DufsGui(tk.Tk):
                     f"服务未能在端口 {cfg.port} 就绪。\n\ndufs 输出：\n{detail[:600]}")
                 return
 
-        self.v_status.set(f"运行中 · PID {self.proc.pid}")
+        self.v_status.set(self.runtime.status_text())
         self.v_url.set(cfg.url())
         self._set_status_color("run")
         self._set_config_enabled(False)
@@ -1029,8 +497,8 @@ class DufsGui(tk.Tk):
                 if kind == "log":
                     self._log(payload)
                 elif kind == "health_ok":
-                    if self.proc.running:
-                        self.v_status.set(f"运行中 · PID {self.proc.pid}")
+                    if self.runtime.running:
+                        self.v_status.set(self.runtime.status_text())
                         self._set_status_color("run")
                         self._log(f"服务已恢复响应（{payload}）")
                 elif kind == "health_fail":

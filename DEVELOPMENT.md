@@ -20,9 +20,17 @@
 
 ```
 main.py            入口，装崩溃兜底后启动 GUI
-app.py             DufsGui（tk.Tk 子类）：全部界面与交互
+app.py             窗口生命周期与启停编排（界面/表单/弹窗已拆到 ui/）
+ui/
+  common.py        APP_NAME 与跨平台字体
+  form.py          表单变量 ⇄ ServerConfig 的双向映射
+  layout.py        主窗口控件骨架
+  advanced.py      高级设置弹窗
 core/
-  config.py        ServerConfig 数据类：字段 + 命令行生成 + 校验 + 持久化
+  config.py        ServerConfig 数据类：字段 + 命令行生成 + 校验 + 持久化；
+                   AppConfig schema 版本化（v1→v2 自动迁移、坏配置备份、原子写）
+  launch.py        build_launch_plan(cfg) 纯函数：参数/皮肤诊断/降级参数/URL
+  runtime.py       DufsRuntime：dufs 定位、版本探测与进程状态的统一入口
   dufsbin.py       dufs.exe 的查找 / 释放 / 安装 / 皮肤目录定位与校验
   server.py        DufsProcess：子进程启停、日志采集、就绪探测、DLL 环境清理
   netutil.py       本机 IP、端口占用检测、空闲端口推荐、前缀规范化
@@ -35,15 +43,24 @@ tools/             fetch_dufs.py（下载 dufs）、fetch_skin.py（同步官方
                    _integrity.py（固定版本 + 逐源 SHA256）、
                    *_checksums.json（官方 digest / TOFU 清单）、
                    embed_dufs.py（可选 base64 内嵌）
-tests/             117 项单测（1 项 jsdom 皮肤 E2E 自动跳过）；
+tests/             127 项单测（1 项 jsdom 皮肤 E2E 自动跳过）；
                    tk_stub.py 提供无 tkinter 环境下的桩
 ```
 
 测试与 CI：
 
-- 本地：`python -m unittest discover -s tests`，117 项，1 项 jsdom E2E 自动跳过
+- 本地：`python -m unittest discover -s tests`，127 项，1 项 jsdom E2E 自动跳过
 - Windows CI：`.github/workflows/windows-ci.yml`，`windows-latest`，
   矩阵 Python 3.9 / 3.12，只跑标准库 unittest
+
+配置与启动（P1）：
+
+- `AppConfig` 带 `config_version`（当前 v2）；无版本号的旧配置载入即迁移。
+  解析失败或版本高于当前支持时，先把坏文件备份为 `config.bad.json`，
+  再回落默认值，并通过 `notice` 在日志里明确提示，不静默吞掉。
+- 配置保存走同目录临时文件 + `os.replace`，避免崩溃留下半截 JSON。
+- 启动决策集中在 `core/launch.py` 的 `build_launch_plan(cfg)`：
+  参数、皮肤诊断、降级参数、检查主机与 URL 都是纯数据，界面层只执行计划。
 
 关键安全默认（P0）：
 

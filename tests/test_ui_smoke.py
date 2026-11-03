@@ -212,7 +212,9 @@ class UiSmokeTest(unittest.TestCase):
 
     def test_popup_size_not_from_measurement(self):
         """源码不得依赖实测高度定尺寸（withdrawn 时不可靠）。"""
-        src = (Path(__file__).resolve().parent.parent / "app.py").read_text(encoding="utf-8")
+        src = "\n".join(
+            p.read_text(encoding="utf-8")
+            for p in [ROOT / "app.py", ROOT / "ui" / "advanced.py"])
         self.assertNotIn("req_h", src, "弹窗尺寸不应依赖实测高度")
 
     def test_advanced_popup_clamped_to_screen(self):

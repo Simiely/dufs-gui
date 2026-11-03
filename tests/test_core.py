@@ -21,6 +21,14 @@ REPO = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(REPO))
 
+UI_SOURCES = [REPO / "app.py"] + sorted((REPO / "ui").glob("*.py"))
+
+
+def ui_source() -> str:
+    """界面代码（app.py + ui/*.py）合并后的源码，用于源码级回归断言。"""
+    return "\n".join(p.read_text(encoding="utf-8") for p in UI_SOURCES)
+
+
 import core as core_pkg  # noqa: E402
 from core import crashlog, dufsbin, server  # noqa: E402
 from core.dufsbin import verify_assets_dir, webui_dir  # noqa: E402
@@ -42,7 +50,7 @@ class UiRegressionTest(unittest.TestCase):
 
     def test_no_hardcoded_wraplength(self):
         """写死 wraplength 会让等效命令换行错乱（曾被截成 `--e`）。"""
-        src = (REPO / "app.py").read_text(encoding="utf-8")
+        src = ui_source()
         self.assertNotIn("wraplength=760", src)
         self.assertNotIn("wraplength=", src.replace("wraplength=max", ""),
                          "命令预览标签不得写死 wraplength")
@@ -59,7 +67,8 @@ class UiRegressionTest(unittest.TestCase):
         self.assertIn("selectimage=", src)
 
     def test_app_uses_themed_checkbutton(self):
-        app = (REPO / "app.py").read_text(encoding="utf-8")
+        # 布局拆到 ui/ 后仍要保证复选框只有一种实现；扫全部界面源码
+        app = ui_source()
         self.assertIn("ThemedCheckbutton(", app)
         self.assertNotIn("cb = ttk.Checkbutton(", app)
 

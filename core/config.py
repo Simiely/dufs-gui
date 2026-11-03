@@ -6,11 +6,15 @@ import ipaddress
 import json
 import os
 import sys
+import tempfile
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 from .netutil import normalize_prefix
+
+#: 配置文件 schema 版本。v1 = 无版本号的旧配置；v2 = 增加版本号并规范化字段。
+CONFIG_VERSION = 2
 
 RENDER_MODES = {
     "自动列表（默认）": "",
@@ -170,6 +174,19 @@ class ServerConfig:
             return "::1"
         return host
 
+    def check_host(self) -> str:
+        """端口占用检查用的主机：通配绑定统一换成 IPv4 回环。
+
+        与 probe_host 的区别是 '' / '::' / '[::]' 都回落到 127.0.0.1，
+        保持历史行为（Windows 上直接连 ::1 的兼容性更差）。
+        """
+        host = self.bind.strip()
+        if host.startswith("[") and host.endswith("]"):
+            host = host[1:-1]
+        if host in ("", "0.0.0.0", "::"):
+            return "127.0.0.1"
+        return host
+
     def health_url(self) -> str:
         """dufs 官方健康检查地址，保持在 path-prefix 之下。"""
         scheme = "https" if self.use_https else "http"
@@ -242,23 +259,41 @@ class ServerConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "ServerConfig":
-        if not data:
-            return cls()
-        valid = {f.name for f in fields(cls)}
-        clean = {k: v for k, v in data.items() if k in valid}
-        cfg = cls(**clean)
+        """逐字段类型校验：类型不符的字段回落默认值，不让脏数据进入命令生成。"""
+        cfg = cls()
+        if not isinstance(data, dict):
+            return cfg
+        defaults = cls()
+        for f in fields(cls):
+            if f.name not in data:
+                continue
+            value = data[f.name]
+            default = getattr(defaults, f.name)
+            if f.name == "port":
+                # bool 是 int 的子类，要单独排除；字符串数字是兼容旧配置的必要支持
+                if isinstance(value, bool):
+                    continue
+                if isinstance(value, int):
+                    cfg.port = value
+                elif isinstance(value, str):
+                    try:
+                        cfg.port = int(value.strip())
+                    except ValueError:
+                        pass
+            elif isinstance(default, bool):
+                if isinstance(value, bool):
+                    setattr(cfg, f.name, value)
+            elif isinstance(default, str):
+                if isinstance(value, str):
+                    setattr(cfg, f.name, value)
         # 自愈：v1.2.1 及更早的"皮肤启动失败自动降级"会把 custom_ui=false 写盘，
         # 造成"一次失败 = 永久关闭"。降级写盘的行为 v1.2.2 就去掉了，
         # 但**已经写进用户配置文件的 false 不会自己消失**，
         # 于是出现"代码和打包都修好了，皮肤却始终不生效"。
         # 这里在载入时恢复为默认 True，一次性消除历史污染。
         # 用户之后仍可手动取消勾选 —— 那属于主动选择，会打 _user_set_custom_ui 标记，不再被改写。
-        if clean.get("custom_ui") is False and not data.get("_user_set_custom_ui"):
+        if data.get("custom_ui") is False and not data.get("_user_set_custom_ui"):
             cfg.custom_ui = True
-        try:
-            cfg.port = int(cfg.port)
-        except (TypeError, ValueError):
-            cfg.port = 5000
         return cfg
 
 
@@ -271,21 +306,91 @@ class AppConfig:
     recent_paths: list[str] = field(default_factory=list)
     dark_mode: bool = True
     current_config: dict[str, Any] = field(default_factory=dict)
+    config_version: int = CONFIG_VERSION
+    #: 载入时的告警（迁移/坏配置恢复）。不落盘，只在界面日志里提示一次。
+    notice: str = field(default="", compare=False, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d.pop("notice", None)
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "AppConfig":
-        if not data:
+        if not isinstance(data, dict):
             return cls()
-        return cls(
-            profiles=dict(data.get("profiles") or {}),
-            current=str(data.get("current") or ""),
-            recent_paths=list(data.get("recent_paths") or []),
-            dark_mode=bool(data.get("dark_mode", True)),
-            current_config=dict(data.get("current_config") or {}),
+
+        notes: list[str] = []
+        version = data.get("config_version", 1)
+        if isinstance(version, bool) or not isinstance(version, int):
+            notes.append("config_version 类型无效，按 v1 处理")
+            version = 1
+        if version > CONFIG_VERSION:
+            raise ConfigTooNew(version)
+        if version < CONFIG_VERSION:
+            notes.append(f"配置已从 v{version} 升级到 v{CONFIG_VERSION}")
+
+        profiles: dict[str, dict[str, Any]] = {}
+        raw_profiles = data.get("profiles")
+        if isinstance(raw_profiles, dict):
+            for key, value in raw_profiles.items():
+                if not isinstance(key, str) or not isinstance(value, dict):
+                    notes.append("profiles 中有条目类型无效，已忽略")
+                    continue
+                # 逐方案做字段级校验，避免脏类型影响下一次切换
+                profiles[key] = ServerConfig.from_dict(value).to_dict()
+        elif raw_profiles is not None:
+            notes.append("profiles 类型无效，已清空")
+
+        raw_current = data.get("current")
+        current = raw_current if isinstance(raw_current, str) else ""
+        if raw_current is not None and not isinstance(raw_current, str):
+            notes.append("current 类型无效，已忽略")
+
+        raw_recent = data.get("recent_paths")
+        recent: list[str] = []
+        if isinstance(raw_recent, list):
+            kept = [x for x in raw_recent if isinstance(x, str)]
+            if len(kept) != len(raw_recent):
+                notes.append("recent_paths 中有非字符串项，已忽略")
+            recent = kept
+        elif raw_recent is not None:
+            notes.append("recent_paths 类型无效，已清空")
+
+        raw_dark = data.get("dark_mode", True)
+        if isinstance(raw_dark, bool):
+            dark = raw_dark
+        else:
+            dark = True
+            if raw_dark is not None:
+                notes.append("dark_mode 类型无效，已用默认值")
+
+        raw_cc = data.get("current_config")
+        if isinstance(raw_cc, dict):
+            current_config = ServerConfig.from_dict(raw_cc).to_dict()
+        else:
+            current_config = {}
+            if raw_cc is not None:
+                notes.append("current_config 类型无效，已清空")
+
+        cfg = cls(
+            profiles=profiles,
+            current=current,
+            recent_paths=recent,
+            dark_mode=dark,
+            current_config=current_config,
+            config_version=CONFIG_VERSION,
         )
+        cfg.notice = "；".join(notes)
+        return cfg
+
+
+class ConfigTooNew(ValueError):
+    """配置文件由更高版本写入；降级读取可能丢字段，所以按坏配置处理。"""
+
+    def __init__(self, version: int):
+        super().__init__(f"配置版本 v{version} 高于当前支持的 v{CONFIG_VERSION}")
+        self.version = version
 
 
 def config_file(path: str | os.PathLike | None = None) -> Path:
@@ -302,16 +407,66 @@ def config_file(path: str | os.PathLike | None = None) -> Path:
     return Path.home() / ".config" / "dufs-gui" / "config.json"
 
 
+def _backup_bad(p: Path) -> Path | None:
+    """把坏配置移到 config.bad.json；移动失败再尝试复制，最后失败返回 None。"""
+    bad = p.with_name("config.bad.json")
+    try:
+        os.replace(p, bad)
+        return bad
+    except OSError:
+        try:
+            import shutil
+            shutil.copy2(p, bad)
+            return bad
+        except OSError:
+            return None
+
+
 def load_config(path: str | os.PathLike | None = None) -> AppConfig:
+    """读取配置；坏文件先备份再回落默认值，并把原因写进 cfg.notice。"""
     p = config_file(path)
     try:
-        return AppConfig.from_dict(json.loads(p.read_text(encoding="utf-8")))
-    except (OSError, ValueError):
+        raw = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return AppConfig()
+    except OSError as e:
+        cfg = AppConfig()
+        cfg.notice = f"读取配置失败（{e}），本次使用默认配置"
+        return cfg
+
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("配置根节点必须是 JSON 对象")
+        return AppConfig.from_dict(data)
+    except ConfigTooNew as e:
+        bad = _backup_bad(p)
+        cfg = AppConfig()
+        cfg.notice = (f"配置文件版本 v{e.version} 高于当前支持的 v{CONFIG_VERSION}，"
+                      + (f"已备份为 {bad.name}，" if bad else "备份失败，")
+                      + "本次使用默认配置")
+        return cfg
+    except (ValueError, TypeError) as e:
+        bad = _backup_bad(p)
+        cfg = AppConfig()
+        cfg.notice = (f"配置文件无法解析（{e}），"
+                      + (f"已备份为 {bad.name}，" if bad else "备份失败，")
+                      + "本次使用默认配置")
+        return cfg
 
 
 def save_config(cfg: AppConfig, path: str | os.PathLike | None = None) -> None:
+    """原子写：同目录临时文件 + os.replace，避免崩溃留下半截 JSON。"""
     p = config_file(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(cfg.to_dict(), ensure_ascii=False, indent=2),
-                 encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(prefix=p.name + ".", suffix=".tmp", dir=str(p.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(cfg.to_dict(), f, ensure_ascii=False, indent=2)
+        os.replace(tmp, p)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        except OSError:
+            pass
