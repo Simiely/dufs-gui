@@ -129,6 +129,9 @@ Win10 直角接受。证据：`spike-legacy-rgn.png` / `spike-legacy-rgn-zoom.pn
 - `README.md` / `docs/使用指南.md`：产物名、版本、圆角与网页外观说明同步。
 - `AGENTS.md`：基线更新到 v1.6.0，并记录网页标题/favicon 只能改运行时副本。
 - 测试：`python -m unittest discover -s tests -q` → **181 tests OK (skipped=1)**。
+- 产物命名核对（2026-11-03）：`DufsGui.spec` 由 `APP_VERSION` 生成 `DufsGui-v1.6.0.exe`，
+  `dist/` 仅有该文件，`BUILD-INFO.txt`、`SHA256SUMS`、README 与使用指南中的下载名均为 v1.6.0，
+  仓库内无任何 v1.5.0 产物残留。
 - `tools/skin_checksums.json` 的 `pinned_version: v0.47.0` 与 `assets/ASSETS_VERSION: 0.47.0`
   **不动**：它们锁定 dufs 二进制与官方皮肤，升级需同时更新官方 SHA256 清单，与 GUI 版本无耦合。
 
@@ -136,13 +139,48 @@ Win10 直角接受。证据：`spike-legacy-rgn.png` / `spike-legacy-rgn-zoom.pn
 
 | 项 | v1.5.0 基线 | v1.6.0 |
 | --- | --- | --- |
-| onefile exe | 15,670,029 B | **15,709,784 B**（+39,755 B，+0.25%） |
-| SHA256 | — | `5d611cf886efa5d4519eee9eb5698f4ddea624ae423c1f1d027d07756eb844fe` |
-| 启动（冻结 → 主窗可见） | 无同口径基线 | 1.57 / 1.82 / 2.36 / 2.42 / 2.57 / 2.83 s（中位 ≈2.4 s，onefile 首启自解压） |
+| onefile exe | 15,670,029 B | **15,709,253 B**（+39,224 B，+0.25%） |
+| SHA256 | — | `5ad1ed670679a7646dcf325e7234dd804d090de9913e00d811895aa06bb38ce0` |
+| 启动（冻结 → 主窗可见） | 无同口径基线 | 中位 2.22 s（5 次 1.91–2.93 s，分解见 7.1） |
 
-最终产物由提交 `e0f5a44` 的干净工作树构建，`BUILD-INFO.txt` 记录 Git 状态为「e0f5a44（工作区干净）」。
+最终产物由提交 `dd5e31a` 的干净工作树构建，`BUILD-INFO.txt` 记录 Git 状态为「dd5e31a（工作区干净）」。
 
 `build.bat` 从当前工作树一次跑通（构建依赖固定，产物校验与 `SHA256SUMS` 全部通过）。
+
+### 7.1 启动耗时分解（实测）
+
+打点由 `DUFS_GUI_TIMING_FILE` 环境变量开启（默认零开销），每节点记录 epoch 毫秒；
+外部脚本从 `Popen` 起每 30 ms 探测 `Dufs GUI` 窗口，取 5 次中位：
+
+| 阶段 | onefile | onedir |
+| --- | --- | --- |
+| 解包 + 引导（Popen→脚本首行） | **928 ms** | 67 ms |
+| Python 导入（→ `imports_done`） | 217 ms | 51 ms |
+| Tk 根窗口（→ `tk_root`） | 37 ms | 35 ms |
+| 表单变量（→ `vars_ready`） | 329 ms | 28 ms（首启 317） |
+| UI 构建（→ `ui_built`） | 143 ms | 140 ms |
+| 主题（→ `theme_done`） | 162 ms | 164 ms |
+| 状态恢复（→ `state_restored`，含网卡枚举） | 387 ms | 374 ms |
+| **合计到窗口可见** | **2220 ms** | **871 ms** |
+
+- onefile 主要来源是**每次启动解包**（928 ms，占 42%），且它在 623–1223 ms 间波动
+  （杀软扫描临时目录）；Python/Tk 引导本身很小（导入 217 + 根窗口 37）。
+- 应用自身初始化稳定在 ≈1.0–1.15 s：`_restore()`+`_refresh_preview()` 约 387 ms
+  （主要是 `list_interfaces()` 枚举网卡），`_build_vars()` 在 onefile 每次冷启约 329 ms
+  （onedir 热态仅 28 ms，说明是磁盘/杀软首触成本，不是 Tk 变量本身）。
+- 此前口径的「≈1.07 s」对应的是**应用初始化段**（不含 onefile 解包与解释器导入），
+  与本次 `app_ms`/onedir 总耗时吻合；不是同一段起止点，不能直接对比。
+
+两种分发形式对比（同一提交、同一代码，不改变当前 onefile 选择）：
+
+| 项 | onefile | onedir |
+| --- | --- | --- |
+| 启动到窗口可见（中位） | 2.22 s（1.91–2.93） | 0.87 s（0.85–0.92，首启 1.40） |
+| 体积 | 15.7 MB | 35.2 MB |
+| 文件数 | 1 | 1002 |
+| 代价 | 每次解包到 `%TEMP%`，首启受杀软影响 | 目录必须整体分发，不可单文件拷贝 |
+
+结论：启动慢的主因是 onefile 解包，**是否切换分发形式由用户决定**，本轮未改。
 
 冻结 exe 复验（`screenshots/frozen-evidence.json`）：
 
@@ -169,7 +207,8 @@ Win10 直角接受。证据：`spike-legacy-rgn.png` / `spike-legacy-rgn-zoom.pn
 - **未圆**：下拉弹层、Text 选区、系统标题栏/文件选择器；原因见第 4 节清单。
 - Win10 仅按 API 返回值降级，当前机器为 Win11，未在 Win10 实机截图。
 - 125%/150% DPI 缩放下未逐档截图（Tk 整数缩放，角块按逻辑像素生成）。
-- 启动耗时为 onefile 首启单点分布，未做旧版本同口径对照（旧 exe 已被新构建覆盖）。
+- 启动分解为本机（Win11、Defender 开启）5 次中位，未覆盖不同磁盘/杀软组合；
+  旧的「≈1.07 s」无原始日志，只能按段位对齐（对应应用初始化段，不含解包）。
 
 ## 10. 现场核对
 
