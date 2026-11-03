@@ -84,8 +84,9 @@ tests/             标准库 unittest；tk_stub.py 提供无 tkinter 环境下�
   间距 4/8/12/16/24（8pt 栅格），控件高约 32px，三级字号。
 - Tk 不支持真实圆角、毛玻璃、SF 字体与连续动画，因此层次用**背景色差 + 1px 低对比描边**
   表达，不为"像 macOS"堆自绘；勾选框用自绘 16x16 位图保证深色下选中态可见。
-- 网卡选择从下拉改为固定高度勾选列表：`ui/bindlist.py` 内嵌 Frame + Canvas，
-  高 5 行，超出滚动（滚动条走 `Vertical.TScrollbar` 深色样式），不随网卡数量撑高窗口。
+- 网卡选择从下拉改为勾选列表：`ui/bindlist.py` 内嵌 Frame + Canvas，行高固定 32px；
+  弹窗 ≤20 行一次显示、>20 行封顶 20 行滚动（滚动条走 `Vertical.TScrollbar` 深色样式），
+  小屏按工作区高度兜底；无地址网卡在弹窗层过滤。
 
 构建与产物（P2）：
 

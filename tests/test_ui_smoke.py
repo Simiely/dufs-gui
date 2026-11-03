@@ -487,6 +487,275 @@ class UiSmokeTest(unittest.TestCase):
         self.assertNotIn("固定深色", layout)
         self.assertNotIn("轻量文件共享", layout)
 
+    # ---------------- 辅助状态 / 网卡弹窗 ----------------
+    def test_ip_summary_only_ips_and_loopback_last(self):
+        from core.netif import ip_summary
+
+        self.assertEqual(ip_summary(["10.4.240.16"]), "10.4.240.16")
+        self.assertEqual(ip_summary(["127.0.0.1", "10.4.240.16"]),
+                         "10.4.240.16 · 127.0.0.1")
+        self.assertEqual(ip_summary(["10.4.240.16", "192.168.1.20"]),
+                         "10.4.240.16 · 192.168.1.20")
+        self.assertEqual(ip_summary(["10.4.240.16", "10.4.240.16"]),
+                         "10.4.240.16")
+        self.assertEqual(ip_summary([]), "")
+
+    def test_aux_status_uses_config_ips_when_idle(self):
+        from core.netif import NetIf
+
+        items = [NetIf("以太网", "10.4.240.16", 4, "ethernet", True),
+                 NetIf("回环", "127.0.0.1", 4, "loopback", True)]
+        orig_items = list(self.gui.bindlist.items)
+        orig_sel = self.gui.bindlist.selected()
+        try:
+            self.gui.bindlist.set_items(items, ["10.4.240.16"])
+            self.gui._refresh_preview()
+            self.assertEqual(self.gui._aux_full, "10.4.240.16")
+            self.gui.bindlist.set_selection(["127.0.0.1", "10.4.240.16"])
+            self.assertEqual(self.gui._aux_full, "10.4.240.16 · 127.0.0.1")
+        finally:
+            self.gui.bindlist.set_items(orig_items, orig_sel)
+
+    def test_aux_status_uses_running_states(self):
+        from core.instances import InstanceState
+
+        states = [
+            InstanceState(bind="127.0.0.1", label="回环",
+                          url="http://127.0.0.1:5099/files/", port=5099,
+                          status="运行中"),
+            InstanceState(bind="10.4.240.16", label="以太网",
+                          url="http://10.4.240.16:5099/files/", port=5099,
+                          status="运行中"),
+        ]
+        self.gui.manager.states = states
+        try:
+            self.gui._render_status_rows()
+            self.assertEqual(self.gui._aux_full, "10.4.240.16 · 127.0.0.1")
+            self.assertNotIn("以太网", self.gui._aux_full)
+        finally:
+            self.gui.manager.states = []
+            self.gui._refresh_preview()
+
+    def test_fit_canvas_text_truncates_with_ellipsis(self):
+        from ui.common import fit_canvas_text
+
+        class FakeCanvas:
+            text = ""
+
+            def itemconfigure(self, _item, **kw):
+                self.text = kw.get("text", self.text)
+
+            def bbox(self, _item):
+                return (0, 0, 7 * len(self.text), 12)
+
+        canvas = FakeCanvas()
+        shown, truncated = fit_canvas_text(
+            canvas, 1, "10.4.240.16 · 192.168.1.20 · 127.0.0.1", 100)
+        self.assertTrue(truncated)
+        self.assertTrue(shown.endswith("…"))
+        self.assertLessEqual(7 * len(shown), 100)
+        shown2, truncated2 = fit_canvas_text(canvas, 1, "10.4.240.16", 200)
+        self.assertFalse(truncated2)
+        self.assertEqual(shown2, "10.4.240.16")
+
+    def test_aux_status_after_stop_falls_back_to_config(self):
+        from core.instances import InstanceState
+        from core.netif import NetIf
+
+        items = [NetIf("以太网", "10.4.240.16", 4, "ethernet", True),
+                 NetIf("回环", "127.0.0.1", 4, "loopback", True)]
+        orig_items = list(self.gui.bindlist.items)
+        orig_sel = self.gui.bindlist.selected()
+        self.gui.manager.states = [
+            InstanceState(bind="127.0.0.1", label="回环",
+                          url="http://127.0.0.1:5099/files/", port=5099,
+                          status="已停止")]
+        try:
+            self.gui.bindlist.set_items(items, ["10.4.240.16", "127.0.0.1"])
+            self.gui._render_status_rows()
+            self.assertEqual(self.gui._aux_full, "10.4.240.16 · 127.0.0.1")
+        finally:
+            self.gui.manager.states = []
+            self.gui.bindlist.set_items(orig_items, orig_sel)
+
+    def test_copy_url_multi_idle_copies_all(self):
+        from core.netif import NetIf
+
+        items = [NetIf("以太网", "10.4.240.16", 4, "ethernet", True),
+                 NetIf("回环", "127.0.0.1", 4, "loopback", True)]
+        orig_items = list(self.gui.bindlist.items)
+        orig_sel = self.gui.bindlist.selected()
+        orig_path = self.gui.v_path.get()
+        self.gui.v_port.set("5099")
+        self.gui.v_prefix.set("files")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                self.gui.v_path.set(td)
+                self.gui.bindlist.set_items(items, ["10.4.240.16", "127.0.0.1"])
+                self.gui.manager.states = []
+                with mock.patch.object(self.gui, "clipboard_clear"), \
+                        mock.patch.object(self.gui, "clipboard_append") as append:
+                    self.gui._copy_url()
+                append.assert_called_once_with(
+                    "http://10.4.240.16:5099/files/\n"
+                    "http://127.0.0.1:5099/files/")
+        finally:
+            self.gui.v_path.set(orig_path)
+            self.gui.bindlist.set_items(orig_items, orig_sel)
+            self.gui._refresh_preview()
+
+    def test_bind_dialog_confirm_and_empty_disabled(self):
+        from core.netif import NetIf
+
+        items = [NetIf("以太网", "10.4.240.16", 4, "ethernet", True),
+                 NetIf("回环", "127.0.0.1", 4, "loopback", True)]
+        win = app_module.dialogs.build_bind_window(
+            self.gui, items, ["10.4.240.16"])
+        win.binds_list.set_selection(["10.4.240.16", "127.0.0.1"])
+        self.assertEqual(win.binds_ok_button["state"], "normal")
+        win.binds_confirm()
+        self.assertEqual(win._result, ["10.4.240.16", "127.0.0.1"])
+
+        empty = app_module.dialogs.build_bind_window(self.gui, items, [])
+        self.assertEqual(empty.binds_ok_button["state"], "disabled")
+        self.assertEqual(empty.binds_reason["text"], "至少选择一个")
+        empty.binds_confirm()                 # 置灰时确认不得关闭窗口
+        self.assertIsNone(getattr(empty, "_result", None))
+        self.assertFalse(empty._binds_done)
+        empty.destroy()
+
+    def test_bind_dialog_height_adapts_without_scrollbar(self):
+        from core.netif import NetIf
+
+        def make(n):
+            return [NetIf(f"网卡{i}", f"10.4.240.{i + 1}", 4, "ethernet", True)
+                    for i in range(n)]
+
+        five = app_module.dialogs.build_bind_window(self.gui, make(5), [])
+        self.assertEqual(five._binds_rows, 5)
+        self.assertFalse(five._binds_scroll)
+        self.assertEqual(five._binds_size[1], 5 * 32 + 196)
+        self.assertFalse(five.binds_list._scrollable)
+
+        twenty = app_module.dialogs.build_bind_window(self.gui, make(20), [])
+        self.assertEqual(twenty._binds_rows, 20)
+        self.assertFalse(twenty._binds_scroll)
+        self.assertEqual(twenty._binds_size[1], 20 * 32 + 196)
+        self.assertFalse(twenty.binds_list._scrollable)
+
+        many = app_module.dialogs.build_bind_window(self.gui, make(21), [])
+        self.assertEqual(many._binds_rows, 20)
+        self.assertTrue(many._binds_scroll)
+        self.assertTrue(many.binds_list._scrollable)
+        for win in (five, twenty, many):
+            win.destroy()
+
+    def test_bind_dialog_height_falls_back_on_small_screen(self):
+        from core.netif import NetIf
+
+        items = [NetIf(f"网卡{i}", f"10.4.240.{i % 250 + 1}", 4, "ethernet", True)
+                 for i in range(20)]
+        with mock.patch.object(app_module.dialogs, "work_area_height",
+                               return_value=480):
+            win = app_module.dialogs.build_bind_window(self.gui, items, [])
+        self.assertLess(win._binds_rows, 20)
+        self.assertTrue(win._binds_scroll)
+        self.assertLessEqual(win._binds_size[1], 480 - 80)
+        win.destroy()
+
+    def test_bind_dialog_width_adapts_and_caps(self):
+        from core.netif import NetIf
+
+        short = [NetIf("回环", "127.0.0.1", 4, "loopback", True)]
+        a = app_module.dialogs.build_bind_window(self.gui, short, [])
+        self.assertEqual(a._binds_size[0], app_module.dialogs.BIND_MIN_W)
+
+        long_name = "A" * 200
+        long_items = [NetIf(long_name, "fd00:0000:0000:0000:0000:0000:0000:0001",
+                            6, "virtual", True)]
+        b = app_module.dialogs.build_bind_window(self.gui, long_items, [])
+        self.assertEqual(b._binds_size[0], app_module.dialogs.BIND_MAX_W)
+        self.assertTrue(b.binds_list._rows[0]["full_text"])
+        for win in (a, b):
+            win.destroy()
+
+    def test_bind_dialog_hides_no_address_rows(self):
+        from core.netif import NetIf
+
+        items = [NetIf("以太网", "10.4.240.16", 4, "ethernet", True),
+                 NetIf("蓝牙", "", 4, "virtual", False),
+                 NetIf("占位", "", 4, "other", False),
+                 NetIf("回环", "127.0.0.1", 4, "loopback", True)]
+        win = app_module.dialogs.build_bind_window(self.gui, items, [])
+        self.assertEqual([i.address for i in win.binds_list.items],
+                         ["10.4.240.16", "127.0.0.1"])
+        self.assertEqual(win._binds_rows, 2)
+        self.assertFalse(win._binds_empty)
+        win.destroy()
+
+    def test_bind_dialog_empty_state(self):
+        from core.netif import NetIf
+
+        win = app_module.dialogs.build_bind_window(
+            self.gui, [NetIf("蓝牙", "", 4, "virtual", False)], [])
+        self.assertTrue(win._binds_empty)
+        self.assertEqual(win._binds_rows, 0)
+        self.assertEqual(win._binds_size[1], app_module.dialogs.BIND_CHROME_H)
+        self.assertEqual(win.binds_ok_button._state, "disabled")
+        self.assertEqual(win.binds_cancel(), "break")
+        self.assertIsNone(getattr(win, "_result", None))
+        win.destroy()
+
+    def test_bind_dialog_cancel_x_and_esc(self):
+        from core.netif import NetIf
+
+        items = [NetIf("以太网", "10.4.240.16", 4, "ethernet", True),
+                 NetIf("回环", "127.0.0.1", 4, "loopback", True)]
+        a = app_module.dialogs.build_bind_window(
+            self.gui, items, ["10.4.240.16"])
+        a.binds_list.set_selection(["10.4.240.16", "127.0.0.1"])  # 未确认
+        a.binds_cancel()
+        self.assertIsNone(a._result)
+        self.assertIs(a.binds_esc, a.binds_cancel)
+
+        b = app_module.dialogs.build_bind_window(
+            self.gui, items, ["10.4.240.16"])
+        b.binds_list.set_selection(["10.4.240.16", "127.0.0.1"])
+        b.destroy()                            # 模拟标题栏 ×
+        self.assertIsNone(b._result)
+
+    def test_bind_dialog_confirm_applies_preview(self):
+        from core.netif import NetIf
+
+        items = [NetIf("以太网", "10.4.240.16", 4, "ethernet", True),
+                 NetIf("回环", "127.0.0.1", 4, "loopback", True)]
+        orig_items = list(self.gui.bindlist.items)
+        orig_sel = self.gui.bindlist.selected()
+        orig_path = self.gui.v_path.get()
+        self.gui.v_port.set("5099")
+        self.gui.v_prefix.set("files")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                self.gui.v_path.set(td)
+                self.gui.bindlist.set_items(items, ["10.4.240.16"])
+                with mock.patch.object(app_module.dialogs, "select_binds",
+                                       return_value=["127.0.0.1"]):
+                    self.gui._open_binds()
+                self.assertEqual(self.gui.bindlist.selected(), ["127.0.0.1"])
+                self.assertEqual(self.gui._aux_full, "127.0.0.1")
+                self.assertEqual(self.gui.v_url.get(),
+                                 "http://127.0.0.1:5099/files/")
+                self.assertEqual(self.gui._qr_urls(),
+                                 ["http://127.0.0.1:5099/files/"])
+
+                with mock.patch.object(app_module.dialogs, "select_binds",
+                                       return_value=None):
+                    self.gui._open_binds()     # × / Esc：丢弃改动
+                self.assertEqual(self.gui.bindlist.selected(), ["127.0.0.1"])
+        finally:
+            self.gui.v_path.set(orig_path)
+            self.gui.bindlist.set_items(orig_items, orig_sel)
+
 
 
 

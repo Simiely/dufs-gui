@@ -1,8 +1,7 @@
-"""固定高度的网卡勾选列表（折叠在「共享地址」卡片里）。
+"""固定高度的网卡勾选列表（模态弹窗里的紧凑模式 + 主窗口选择模型）。
 
-为什么不用下拉：多选下拉在不同平台上的键盘/焦点行为差异很大，而且展开时会
-遮挡其他控件。这里用 Canvas + 内嵌 Frame 固定显示 3 行，超出用圆角滚动条，
-展开网卡明细时不会把地址列表挤没。
+弹窗里用 Canvas + 内嵌 Frame 显示固定行数，超出用圆角滚动条，窗口高度随
+网卡数量自适应并封顶。主窗口不再显示这个列表，只借它保存勾选状态与排序。
 
 键盘：Tab 进入列表，↑/↓ 移动当前行，空格/回车切换勾选，再按 Tab 离开。
 每行的 hover/焦点底色是 6px 圆角块，文字用 Canvas 绘制（无背景方块）。
@@ -17,27 +16,35 @@ from typing import Callable, Iterable
 from core.netif import NetIf
 from core.theme import DARK, SPACE, fonts
 
-from .common import emoji_font
+from .common import ellipsize, emoji_font, text_width
 from .roundrect import RoundScrollbar, _RoundItems
 
 ROW_HEIGHT = 30
+COMPACT_ROW_HEIGHT = 32
 VISIBLE_ROWS = 3
 
 
 class BindCheckList(ttk.Frame):
-    """网卡多选列表：勾选框 + 名称 + IP + 状态。"""
+    """网卡多选列表：普通模式含名称/IP/状态；紧凑模式以 IP 为主信息。"""
 
-    def __init__(self, master, on_change: Callable[[int], None] | None = None):
+    def __init__(self, master, on_change: Callable[[int], None] | None = None,
+                 *, compact: bool = False, visible_rows: int = VISIBLE_ROWS,
+                 text_budget: int = 0):
         c = DARK
         super().__init__(master, style="TFrame")
         self._on_change = on_change
+        self._compact = compact
+        self._row_height = COMPACT_ROW_HEIGHT if compact else ROW_HEIGHT
+        self._visible_rows = max(1, visible_rows)
+        self._text_budget = text_budget       # 紧凑模式 IP+名称的像素预算，0=不限
+        self._scrollable = False
         self.items: list[NetIf] = []
         self._vars: list[tk.BooleanVar] = []
         self._rows: list[dict] = []
         self._focus_index = 0
         self._enabled = True
 
-        height = ROW_HEIGHT * VISIBLE_ROWS
+        height = self._row_height * visible_rows
         self.canvas = tk.Canvas(self, bg=c["panel"], highlightthickness=0,
                                 borderwidth=0, height=height,
                                 takefocus=True, cursor="hand2")
@@ -69,6 +76,15 @@ class BindCheckList(ttk.Frame):
             self._rows.append(self._make_row(index, item, var))
         self._sync_scrollregion()
         self._sync_width()
+        # 行数不超出可视区时收起滚动条，不占右侧宽度
+        self._scrollable = len(self.items) > self._visible_rows
+        try:
+            if self._scrollable:
+                self.vsb.grid()
+            else:
+                self.vsb.grid_remove()
+        except Exception:
+            pass
         self._paint_rows()
         self._notify()
 
@@ -129,7 +145,8 @@ class BindCheckList(ttk.Frame):
     def _make_row(self, index: int, item: NetIf, var: tk.BooleanVar) -> dict:
         c = DARK
         f = fonts()
-        row = tk.Canvas(self.inner, bg=c["panel"], height=ROW_HEIGHT, bd=0,
+        h = self._row_height
+        row = tk.Canvas(self.inner, bg=c["panel"], height=h, bd=0,
                         highlightthickness=0)
         row.grid(row=index, column=0, sticky="ew")
         self.inner.columnconfigure(0, weight=1)
@@ -142,44 +159,82 @@ class BindCheckList(ttk.Frame):
         from core.theme import ThemedCheckbutton
         cb = ThemedCheckbutton(row, variable=var, bg_key="panel",
                                takefocus=False, onvalue=True, offvalue=False)
-        cb_id = row.create_window(9, ROW_HEIGHT / 2, anchor="w", window=cb)
+        row.create_window(9, h / 2, anchor="w", window=cb)
 
         color = c["fg"] if item.bindable else c["muted"]
-        icon = row.create_text(34, ROW_HEIGHT / 2, anchor="w", text=item.icon,
-                               fill=color, font=emoji_font(11))
-        name_text = (item.display_name or "")[:11]
-        name = row.create_text(52, ROW_HEIGHT / 2, anchor="w", text=name_text,
-                               fill=color, font=f["body"])
-        address = item.address or "无地址"
-        addr = row.create_text(158, ROW_HEIGHT / 2, anchor="w", text=address,
-                               fill=color, font=f["mono"])
-        status = row.create_text(10, ROW_HEIGHT / 2, anchor="e",
-                                 text=item.status_text,
-                                 fill=c["muted"] if item.bindable else c["border"],
-                                 font=f["caption"])
+        full_text = ""
+        if self._compact:
+            # IP 主信息；网卡名只作弱化副文本，用于同 IP / 同名场景区分。
+            # 默认不截断；只有整行超过最大宽度时才省略，并保留完整值给 tooltip。
+            addr_text = item.address or ""
+            name_text = item.name or ""
+            budget = self._text_budget
+            if budget > 0:
+                addr_w = text_width(addr_text, f["mono"])
+                name_w = text_width(name_text, f["caption"])
+                if addr_w + 12 + name_w > budget:
+                    name_text, cut_name = ellipsize(
+                        name_text, max(0, budget - addr_w - 12), f["caption"])
+                    if budget - addr_w - 12 < 30:
+                        addr_text, cut_addr = ellipsize(
+                            addr_text, max(40, budget - 42), f["mono"])
+                        if cut_addr:
+                            full_text = (item.address or "") + (
+                                " · " + item.name if item.name else "")
+                    if not full_text and cut_name and item.name:
+                        full_text = item.name
+            addr = row.create_text(34, h / 2, anchor="w", text=addr_text,
+                                   fill=color, font=f["mono"])
+            name = row.create_text(0, h / 2, anchor="e", text=name_text,
+                                   fill=c["muted"], font=f["caption"])
+            labels = (addr, name)
+        else:
+            icon = row.create_text(34, h / 2, anchor="w", text=item.icon,
+                                   fill=color, font=emoji_font(11))
+            name_text = (item.display_name or "")[:11]
+            name_item = row.create_text(52, h / 2, anchor="w", text=name_text,
+                                        fill=color, font=f["body"])
+            addr = row.create_text(158, h / 2, anchor="w",
+                                   text=item.address or "无地址",
+                                   fill=color, font=f["mono"])
+            status = row.create_text(10, h / 2, anchor="e",
+                                     text=item.status_text,
+                                     fill=c["muted"] if item.bindable else c["border"],
+                                     font=f["caption"])
+            labels = (icon, name_item, addr, status)
 
-        row.bind("<Configure>", lambda e, r=row, s=status, hp=hover_pill,
-                 fp=focus_pill: self._place_row(r, s, hp, fp))
-        for widget in (row,):
-            widget.bind("<Button-1>", lambda e, i=index: self._click_row(i))
-            widget.bind("<Enter>", lambda e, i=index: self._hover_row(i, True))
-            widget.bind("<Leave>", lambda e, i=index: self._hover_row(i, False))
-            widget.bind("<MouseWheel>", self._on_wheel)
+        if self._compact:
+            row.bind("<Configure>",
+                     lambda e, r=row, n=name, hp=hover_pill, fp=focus_pill:
+                     self._place_row(r, None, hp, fp, n))
+        else:
+            row.bind("<Configure>",
+                     lambda e, r=row, s=status, hp=hover_pill, fp=focus_pill:
+                     self._place_row(r, s, hp, fp))
+        widget = row
+        widget.bind("<Button-1>", lambda e, i=index: self._click_row(i))
+        widget.bind("<Enter>", lambda e, i=index: self._hover_row(i, True))
+        widget.bind("<Leave>", lambda e, i=index: self._hover_row(i, False))
+        widget.bind("<MouseWheel>", self._on_wheel)
         cb.bind("<Button-1>", lambda e, i=index: self._click_check(i))
         if not item.bindable or not self._enabled:
             cb.configure(state="disabled")
-        return {"row": row, "cb": cb, "labels": (icon, name, addr, status),
+        return {"row": row, "cb": cb, "labels": labels,
                 "item": item, "row_index": index, "hover": hover_pill,
-                "focus": focus_pill, "hovered": False}
+                "focus": focus_pill, "hovered": False,
+                "full_text": full_text}
 
-    def _place_row(self, row, status, hover_pill, focus_pill) -> None:
+    def _place_row(self, row, status, hover_pill, focus_pill, name=None) -> None:
         w = row.winfo_width()
         if w <= 10:
             return
         for pill in (hover_pill, focus_pill):
-            pill.place(2, 1, w - 2, ROW_HEIGHT - 1)
+            pill.place(2, 1, w - 2, self._row_height - 1)
         try:
-            row.coords(status, w - 10, ROW_HEIGHT / 2)
+            if name is not None:
+                row.coords(name, w - 10, self._row_height / 2)
+            elif status is not None:
+                row.coords(status, w - 10, self._row_height / 2)
         except Exception:
             pass
 
@@ -296,17 +351,20 @@ class BindCheckList(ttk.Frame):
         try:
             top = self.canvas.canvasy(0)
             view_h = max(1, self.canvas.winfo_height())
-            row_top = index * ROW_HEIGHT
-            row_bottom = row_top + ROW_HEIGHT
+            row_top = index * self._row_height
+            row_bottom = row_top + self._row_height
+            total = max(1, len(self.items) * self._row_height)
             if row_top < top:
-                self.canvas.yview_moveto(row_top / max(1, len(self.items) * ROW_HEIGHT))
+                self.canvas.yview_moveto(row_top / total)
             elif row_bottom > top + view_h:
                 offset = row_bottom - view_h
-                self.canvas.yview_moveto(offset / max(1, len(self.items) * ROW_HEIGHT))
+                self.canvas.yview_moveto(offset / total)
         except Exception:
             pass
 
     def _on_wheel(self, event) -> str:
+        if not self._scrollable:
+            return "break"
         try:
             steps = -1 if event.delta > 0 else 1
             self.canvas.yview_scroll(steps, "units")

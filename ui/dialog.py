@@ -18,9 +18,9 @@ from tkinter import filedialog, ttk
 from core import qr
 from core.theme import (DARK, SPACE, apply_theme, enable_windows_dark_titlebar,
                         enable_windows_rounded_corners, fonts)
-from core.winpos import center_on_parent
+from core.winpos import center_on_parent, work_area_height
 
-from .common import ui_font
+from .common import text_width, ui_font
 from .roundrect import RoundButton, RoundField, RoundPanel, RoundSurface
 
 
@@ -356,7 +356,8 @@ def build_qr_window(parent: tk.Misc, url: str,
                 radius=8, kind="outline", bg=DARK["bg"],
                 font=ui_font(9)).pack(side="right", padx=(0, SPACE["sm"]))
     win.bind("<Escape>", lambda e: _finish(win, None))
-    win._qr_size = (width, max_side + 220 + (52 if has_selector else 0))
+    # 240 为标题/地址行/说明/按钮行与内边距；底部按钮留 12px 下边距，避免被裁切
+    win._qr_size = (width, max_side + 240 + (52 if has_selector else 0))
     return win
 
 
@@ -364,3 +365,160 @@ def show_qr(parent: tk.Misc, url: str, urls: list[str] | None = None) -> None:
     win = build_qr_window(parent, url, urls=urls)
     width, height = win._qr_size
     _modal(win, width, height)
+
+
+# ---------------- 网卡勾选 ----------------
+#: 弹窗固定 chrome（标题/说明/原因/按钮行/内外边距），行高与列表一致
+BIND_CHROME_H = 196
+BIND_ROW_H = 32
+BIND_MAX_ROWS = 20
+BIND_MIN_W = 400
+BIND_MAX_W = 720
+
+
+class _RowTip:
+    """行内文本超长时的悬停提示（深色，跟随光标）。"""
+
+    def __init__(self, win: tk.Toplevel):
+        self.win = win
+        self.tip: tk.Toplevel | None = None
+
+    def show(self, text: str, x_root: int, y_root: int) -> None:
+        self.hide()
+        try:
+            tip = tk.Toplevel(self.win)
+            tip.overrideredirect(True)
+            tip.configure(bg=DARK["border"])
+            tk.Label(tip, text=text, bg=DARK["card"], fg=DARK["fg"],
+                     font=fonts()["caption"], padx=8, pady=4).pack(padx=1, pady=1)
+            tip.geometry(f"+{x_root + 12}+{y_root + 16}")
+            self.tip = tip
+        except Exception:
+            self.tip = None
+
+    def hide(self) -> None:
+        if self.tip is not None:
+            try:
+                self.tip.destroy()
+            except Exception:
+                pass
+            self.tip = None
+
+
+def build_bind_window(parent: tk.Misc, items: list,
+                      selected=(), title: str = "选择共享网卡") -> tk.Toplevel:
+    """网卡多选弹窗（不进入模态循环，便于测试）。
+
+    IP 是主信息，网卡名只作弱化副文本。确定 = 保存并生效；标题栏 × 与 Esc
+    都是取消（丢弃未确认的勾选）。全不选时「确定」置灰并显示原因。
+    """
+    from .bindlist import COMPACT_ROW_HEIGHT, BindCheckList
+
+    # 只列真正有地址的网卡：断开的/纯占位适配器（地址为空）直接过滤掉
+    items = [it for it in items if (it.address or "").strip()]
+    empty = not items
+    win = _new_window(parent, title)
+    win._binds_done = False
+    body = _card(win)
+    ttk.Label(body, text="选择要共享的网卡", style="CardTitle.TLabel").pack(anchor="w")
+    hint = ttk.Label(body, text="可多选；勾选后点「确定」生效",
+                     style="MutedCard.TLabel", font=fonts()["caption"])
+    hint.pack(anchor="w", pady=(SPACE["xs"], SPACE["sm"]))
+
+    # 高度按数量自适应：全部一次可见；只有 >20 行（或小屏放不下）才滚动
+    screen_h = work_area_height(win)
+    max_rows_fit = max(1, (screen_h - 80 - BIND_CHROME_H) // BIND_ROW_H)
+    rows_visible = max(1, min(len(items), BIND_MAX_ROWS, max_rows_fit))
+    scroll = len(items) > rows_visible
+
+    # 宽度按最长一行内容自适应，封顶后超长文本省略 + tooltip
+    f = fonts()
+    content_w = 0
+    for item in items:
+        content_w = max(content_w, text_width(item.address, f["mono"]) + 12
+                        + text_width(item.name or "", f["caption"]))
+    cols = 120 + (14 if scroll else 0)     # 边距 + 勾选框 + IP 起点 + 行内间距
+    width = min(BIND_MAX_W, max(BIND_MIN_W, content_w + cols))
+    listing = BindCheckList(body, compact=True, visible_rows=rows_visible,
+                            text_budget=width - cols)
+    if empty:
+        rows_visible = 0
+        scroll = False
+        hint.configure(text="未检测到可用网络地址")
+    else:
+        listing.pack(fill="both", expand=True)
+        listing.canvas.configure(height=COMPACT_ROW_HEIGHT * rows_visible)
+
+    reason = ttk.Label(body, text="", style="MutedCard.TLabel",
+                       font=fonts()["caption"])
+    reason.pack(anchor="w", pady=(SPACE["xs"], 0))
+
+    def confirm(_event=None):
+        chosen = listing.selected()
+        if not chosen or win._binds_done:
+            return "break"
+        win._binds_done = True
+        _finish(win, chosen)
+        return "break"
+
+    def cancel(_event=None):
+        if win._binds_done:
+            return "break"
+        win._binds_done = True
+        _finish(win, None)
+        return "break"
+
+    foot = _foot(win)
+    RoundButton(foot, "取消", command=cancel, width=64, height=28, radius=8,
+                kind="outline", bg=DARK["bg"],
+                font=ui_font(9)).pack(side="right")
+    ok_btn = RoundButton(foot, "确定", command=confirm, width=64, height=28,
+                         radius=8, kind="accent", bg=DARK["bg"],
+                         font=ui_font(9, "bold"), state="disabled")
+    ok_btn.pack(side="right", padx=(0, SPACE["sm"]))
+
+    def sync_ok(_count=0):
+        chosen = listing.selected()
+        ok_btn.set_state("normal" if chosen else "disabled")
+        if empty:
+            reason.configure(text="", foreground=DARK["muted"])
+        else:
+            reason.configure(
+                text="" if chosen else "至少选择一个",
+                foreground=DARK["danger"] if not chosen else DARK["muted"])
+
+    listing._on_change = sync_ok
+    listing.set_items(items, selected)
+    sync_ok()
+    # 行文本被省略时，悬停显示完整值（数量少/宽度够时不会触发）
+    tip = _RowTip(win)
+    for row in listing._rows:
+        full = row.get("full_text")
+        if not full:
+            continue
+        row["row"].bind(
+            "<Enter>",
+            lambda e, t=full: tip.show(t, e.x_root, e.y_root), add="+")
+        row["row"].bind("<Leave>", lambda e: tip.hide(), add="+")
+
+    win.bind("<Escape>", cancel)
+    win.protocol("WM_DELETE_WINDOW", cancel)
+    win.binds_list = listing
+    win.binds_ok_button = ok_btn
+    win.binds_reason = reason
+    win.binds_confirm = confirm
+    win.binds_cancel = cancel
+    win.binds_esc = cancel
+    win._binds_size = (width, rows_visible * COMPACT_ROW_HEIGHT + BIND_CHROME_H)
+    win._binds_rows = rows_visible
+    win._binds_scroll = scroll
+    win._binds_empty = empty
+    return win
+
+
+def select_binds(parent: tk.Misc, items: list, selected=()) -> list[str] | None:
+    """模态网卡勾选：确定返回勾选地址，取消/×/Esc 返回 None。"""
+    win = build_bind_window(parent, items, selected)
+    width, height = win._binds_size
+    _modal(win, width, height)
+    return getattr(win, "_result", None)

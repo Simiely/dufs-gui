@@ -21,17 +21,20 @@ from core.config import (AppConfig, ServerConfig, config_file, load_config,
 from core.health import HealthMonitor
 from core.instances import InstanceManager
 from core.launch import build_launch_plans
-from core.netif import apply_saved, list_interfaces
+from core.netif import apply_saved, list_interfaces, sort_loopback_last
 from core.netutil import find_free_port, port_in_use
 from core.runtime import DufsRuntime
 from core.theme import (DARK, apply_theme, enable_windows_dark_titlebar,
-                        enable_windows_rounded_corners)
+                        enable_windows_rounded_corners, fonts)
 from ui import dialog as dialogs
 from ui.advanced import AdvancedDialogMixin
 from ui.bindlist import BindCheckList
-from ui.common import emoji_font
+from ui.common import fit_canvas_text
 from ui.form import FormStateMixin
 from ui.layout import MainLayoutMixin
+
+#: 仍代表本轮共享的状态；「已停止」之后界面统一回到配置里的地址
+LIVE_STATUS = frozenset({"运行中", "无响应", "启动中", "失败", "已退出"})
 
 
 class _IdleProcess:
@@ -231,38 +234,30 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
     def _on_binds_change(self, count: int) -> None:
         self._pending_binds = self.bindlist.selected()
         self._refresh_preview()
-        self._apply_binds_expanded()
 
-    def _apply_binds_expanded(self) -> None:
-        """折叠态只留一行弱化摘要；展开态显示勾选明细。会话内记住。"""
-        if not hasattr(self, "binds_holder"):
+    def _open_binds(self) -> None:
+        """网卡勾选模态弹窗：确定立即生效；×/Esc 丢弃未确认的勾选。"""
+        if self.manager.running:
             return
-        expanded = bool(getattr(self, "_binds_expanded", False))
-        if expanded:
-            self.binds_holder.grid()
-            text = "收起网卡明细"
-        else:
-            self.binds_holder.grid_remove()
-            n = len(self._address_rows()) if hasattr(self, "addr_list") else 0
-            text = f"{n} 个地址 · 单击查看网卡" if n else "单击查看网卡"
-        try:
-            self.lbl_binds_toggle.configure(text=text)
-        except Exception:
-            pass
+        chosen = dialogs.select_binds(self, list(self.bindlist.items),
+                                      self.bindlist.selected())
+        if chosen is None:
+            return
+        self.bindlist.set_selection(chosen)
+        self._pending_binds = self.bindlist.selected()
+        self._log("共享网卡已更新：" + ("、".join(self._pending_binds) or "无"))
 
-    def _toggle_binds(self) -> None:
-        self._binds_expanded = not getattr(self, "_binds_expanded", False)
-        self._apply_binds_expanded()
-
-    def _select_all_binds(self) -> None:
-        self.bindlist.select_all()
-        self._log("已勾选全部可用网卡")
+    def _active_states(self) -> list:
+        """本轮仍有效的实例状态；停止后归「已停止」，界面回到配置地址。"""
+        return [st for st in self.manager.states
+                if (st.bind or "").strip() and st.status in LIVE_STATUS]
 
     def _address_rows(self) -> list[tuple[str, str, str]]:
         """(url, 网卡名, 状态)：网址是主信息，网卡名只作右侧弱化注释。"""
-        if self.manager.states:
+        states = self._active_states()
+        if states:
             return [(st.url, st.display, st.status)
-                    for st in self.manager.states if st.url]
+                    for st in states if st.url]
         cfg = self.current_config()
         if not cfg.share_path:
             return []
@@ -277,7 +272,94 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
             return
         rows = self._address_rows()
         self.addr_list.set_rows(rows)
-        self._apply_binds_expanded()
+        self._render_aux_status()
+
+    def _aux_ip_parts(self) -> list[tuple[str, str]]:
+        """辅助状态的 IP 与颜色：运行中用实际地址，未运行用配置地址。"""
+        states = self._active_states()
+        if states:
+            colors = {"运行中": self.colors["fg"], "启动中": self.colors["warn"],
+                      "无响应": self.colors["warn"], "失败": self.colors["danger"],
+                      "已退出": self.colors["danger"]}
+            raw = [(st.bind, colors.get(st.status, self.colors["muted"]))
+                   for st in states]
+        else:
+            cfg = self.current_config()
+            raw = [(bind, self.colors["muted"]) for bind in cfg.effective_binds()]
+        order = sort_loopback_last([ip for ip, _ in raw])
+        color_of: dict[str, str] = {}
+        for ip, color in raw:
+            color_of.setdefault(ip, color)
+        return [(ip, color_of[ip]) for ip in order]
+
+    def _render_aux_status(self) -> None:
+        """辅助状态只画 IP：单行、超宽末尾省略、悬停显示完整值。"""
+        canvas = getattr(self, "aux_canvas", None)
+        if canvas is None:
+            return
+        self._hide_aux_tooltip()
+        try:
+            canvas.delete("all")
+        except Exception:
+            return
+        parts = self._aux_ip_parts()
+        self._aux_full = " · ".join(ip for ip, _ in parts)
+        self._aux_truncated = False
+        if not parts:
+            self._aux_full = ""
+            try:
+                canvas.create_text(2, 11, anchor="w", text="未选择地址",
+                                   fill=self.colors["muted"],
+                                   font=fonts()["caption"])
+            except Exception:
+                pass
+            return
+        colors = {color for _, color in parts}
+        if self.colors["danger"] in colors:
+            fill = self.colors["danger"]
+        elif self.colors["warn"] in colors:
+            fill = self.colors["warn"]
+        elif self.colors["fg"] in colors:
+            fill = self.colors["fg"]
+        else:
+            fill = self.colors["muted"]
+        try:
+            item = canvas.create_text(2, 11, anchor="w", text=self._aux_full,
+                                      fill=fill, font=fonts()["mono"])
+            width = canvas.winfo_width()
+            if width > 40:
+                _shown, truncated = fit_canvas_text(
+                    canvas, item, self._aux_full, width - 6)
+                self._aux_truncated = truncated
+        except Exception:
+            pass
+
+    def _show_aux_tooltip(self, event=None) -> None:
+        if not getattr(self, "_aux_truncated", False):
+            return
+        self._hide_aux_tooltip()
+        try:
+            tip = tk.Toplevel(self)
+            tip.overrideredirect(True)
+            tip.configure(bg=self.colors["border"])
+            tk.Label(tip, text=self._aux_full, bg=self.colors["card"],
+                     fg=self.colors["fg"], font=fonts()["caption"],
+                     padx=8, pady=4).pack(padx=1, pady=1)
+            x = (event.x_root + 12) if event is not None else self.winfo_rootx()
+            y = (event.y_root + 16) if event is not None else self.winfo_rooty()
+            tip.geometry(f"+{x}+{y}")
+            self._aux_tip = tip
+        except Exception:
+            self._aux_tip = None
+
+    def _hide_aux_tooltip(self, _event=None) -> None:
+        tip = getattr(self, "_aux_tip", None)
+        if tip is not None:
+            try:
+                tip.destroy()
+            except Exception:
+                pass
+        self._aux_tip = None
 
     def _on_addr_overflow(self, hidden: int) -> None:
         if not hasattr(self, "lbl_addr_count"):
@@ -641,45 +723,36 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
 
     # ---------------- 状态行 ----------------
     def _render_status_rows(self) -> None:
+        """右栏只列异常地址（IP + 状态），不重复网址与网卡描述。"""
         host = getattr(self, "status_rows_host", None)
         if host is None:
             return
         for child in host.winfo_children():
             child.destroy()
-        states = self.manager.states
-        if not states:
-            tk.Label(host, text="尚未开启共享 · 勾选网卡后点「开启共享」",
-                     bg=self.colors["panel"], fg=self.colors["muted"],
-                     font=("Microsoft YaHei UI", 9), anchor="w").grid(
-                row=0, column=0, sticky="ew", pady=(0, 2))
-            return
-
-        # 网址已由左栏地址列表承担；这里只列异常地址，避免重复与撑破卡片。
-        problems = [st for st in states if not st.running and st.status != "启动中"]
-        colors = {"运行中": self.colors["ok"], "启动中": self.colors["warn"],
-                  "无响应": self.colors["warn"], "失败": self.colors["danger"]}
-        icons = {item.address: item.icon for item in self.bindlist.items
-                 if item.address}
-        for i, st in enumerate(problems):
-            row = tk.Frame(host, bg=self.colors["panel"])
-            row.grid(row=i, column=0, sticky="ew", pady=(0, 2))
-            row.columnconfigure(2, weight=1)
-            tk.Label(row, text="●", bg=self.colors["panel"],
-                     fg=colors.get(st.status, self.colors["muted"]),
-                     font=("Microsoft YaHei UI", 8)).grid(row=0, column=0,
-                                                          padx=(0, 6))
-            tk.Label(row, text=icons.get(st.bind, "🔗"), bg=self.colors["panel"],
-                     fg=self.colors["fg"], font=emoji_font(10), width=2).grid(
-                row=0, column=1, sticky="w")
-            tk.Label(row, text=f"{st.display} · {st.bind}", bg=self.colors["panel"],
-                     fg=self.colors["fg"], font=("Microsoft YaHei UI", 9),
-                     anchor="w").grid(row=0, column=2, sticky="w")
-            tk.Label(row, text=st.status, bg=self.colors["panel"],
-                     fg=colors.get(st.status, self.colors["muted"]),
-                     font=("Microsoft YaHei UI", 9), anchor="e").grid(
-                row=0, column=3, sticky="e", padx=(8, 0))
-        urls = [st.url for st in states if st.running]
-        self.v_url.set("  ".join(urls) if urls else "—")
+        states = self._active_states()
+        if states:
+            problems = [st for st in states
+                        if not st.running and st.status != "启动中"]
+            colors = {"运行中": self.colors["ok"], "启动中": self.colors["warn"],
+                      "无响应": self.colors["warn"], "失败": self.colors["danger"],
+                      "已退出": self.colors["danger"]}
+            for i, st in enumerate(problems):
+                row = tk.Frame(host, bg=self.colors["panel"])
+                row.grid(row=i, column=0, sticky="ew", pady=(0, 2))
+                row.columnconfigure(1, weight=1)
+                tk.Label(row, text="●", bg=self.colors["panel"],
+                         fg=colors.get(st.status, self.colors["muted"]),
+                         font=("Microsoft YaHei UI", 8)).grid(
+                    row=0, column=0, padx=(0, 6))
+                tk.Label(row, text=st.bind, bg=self.colors["panel"],
+                         fg=self.colors["fg"], font=fonts()["mono"],
+                         anchor="w").grid(row=0, column=1, sticky="w")
+                tk.Label(row, text=st.status, bg=self.colors["panel"],
+                         fg=colors.get(st.status, self.colors["muted"]),
+                         font=("Microsoft YaHei UI", 9), anchor="e").grid(
+                    row=0, column=2, sticky="e", padx=(8, 0))
+            urls = [st.url for st in states if st.status in ("运行中", "无响应")]
+            self.v_url.set("  ".join(urls) if urls else "—")
         self._refresh_addr_list()
 
     # ---------------- 浏览器 / 剪贴板 ----------------
@@ -719,10 +792,9 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         dialogs.show_qr(self, urls[0], urls=urls)
 
     def _copy_url(self) -> None:
-        urls = [st.url for st in self.manager.running_states]
-        if not urls:
-            urls = [self.v_url.get()]
-        text = "\n".join(urls)
+        # 与二维码同源：运行中用实际监听地址，未运行用全部配置地址
+        urls = self._qr_urls()
+        text = "\n".join(urls) if urls else self.v_url.get()
         self.clipboard_clear()
         self.clipboard_append(text)
         self._log(f"已复制：{text}")

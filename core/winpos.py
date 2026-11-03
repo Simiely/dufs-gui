@@ -26,6 +26,24 @@ def center_on_parent(win: tk.Misc, parent: tk.Misc,
     win.geometry(f"{width}x{height}+{x}+{y}")
 
 
+def work_area_height(win: tk.Misc) -> int:
+    """当前显示器工作区高度（不含任务栏）；失败时退回屏幕高度 - 80。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        rect = wintypes.RECT()
+        if ctypes.windll.user32.SystemParametersInfoW(  # type: ignore[attr-defined]
+                0x0030, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+            return rect.bottom - rect.top
+    except Exception:
+        pass
+    try:
+        return max(200, win.winfo_screenheight() - 80)
+    except Exception:
+        return 720
+
+
 def clamp_to_screen(win: tk.Misc, x: int, y: int,
                     width: int, height: int) -> tuple[int, int]:
     """确保窗口完整落在某个显示器内。

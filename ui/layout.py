@@ -123,7 +123,7 @@ class MainLayoutMixin:
         self.config_widgets += [self.ent_path, self.btn_browse, self.cmb_recent]
 
     def _build_net_card(self, parent: ttk.Frame, row: int) -> None:
-        """共享地址卡片：网址优先；网卡明细默认折叠，状态在会话内记住。"""
+        """共享地址卡片：网址优先；底部只留 IP 摘要与「查看网卡」入口。"""
         box = self._card(parent, row, "", fill="nsew", expand=True,
                          pady_bottom=SPACE["md"])
         box.columnconfigure(0, weight=1)
@@ -142,34 +142,27 @@ class MainLayoutMixin:
                                      on_overflow=self._on_addr_overflow)
         self.addr_list.grid(row=1, column=0, sticky="nsew")
 
-        self.lbl_binds_toggle = ttk.Label(box, text="", style="MutedCard.TLabel",
-                                          font=f_small(), cursor="hand2")
-        self.lbl_binds_toggle.grid(row=2, column=0, sticky="w",
-                                   pady=(SPACE["sm"], 0))
-        self.lbl_binds_toggle.bind("<Button-1>", lambda e: self._toggle_binds())
+        # 辅助状态：只显示 IP，宽度不足时截断并悬停显示完整值
+        bottom = ttk.Frame(box, style="Card.TFrame")
+        bottom.grid(row=2, column=0, sticky="ew", pady=(SPACE["xs"], 0))
+        bottom.columnconfigure(0, weight=1)
+        self.aux_canvas = tk.Canvas(bottom, bg=DARK["panel"], highlightthickness=0,
+                                    bd=0, height=24)
+        self.aux_canvas.grid(row=0, column=0, sticky="ew")
+        self.aux_canvas.bind("<Configure>", lambda e: self._render_aux_status())
+        self.aux_canvas.bind("<Enter>", self._show_aux_tooltip)
+        self.aux_canvas.bind("<Leave>", self._hide_aux_tooltip)
+        self.btn_binds = RoundButton(bottom, "查看网卡", command=self._open_binds,
+                                     width=78, height=24, radius=6,
+                                     kind="outline", bg=DARK["panel"],
+                                     font=ui_font(8))
+        self.btn_binds.grid(row=0, column=1, sticky="e", padx=(SPACE["sm"], 0))
 
-        self.binds_holder = tk.Frame(box, bg=DARK["panel"])
-        self.binds_holder.grid(row=3, column=0, sticky="ew",
-                               pady=(SPACE["xs"], 0))
-        self.binds_holder.columnconfigure(0, weight=1)
-        dhead = tk.Frame(self.binds_holder, bg=DARK["panel"])
-        dhead.grid(row=0, column=0, sticky="ew", pady=(0, SPACE["xs"]))
-        dhead.columnconfigure(0, weight=1)
-        tk.Label(dhead, text="网卡明细 · 勾选要监听的地址", bg=DARK["panel"],
-                 fg=DARK["muted"], font=f_small(), anchor="w").grid(
-            row=0, column=0, sticky="w")
-        RoundButton(dhead, "全部", command=self._select_all_binds, width=48,
-                    height=24, radius=6, kind="outline", bg=DARK["panel"],
-                    font=ui_font(8)).grid(row=0, column=1, sticky="e")
-
-        self.bindlist = BindCheckList(self.binds_holder,
-                                      on_change=self._on_binds_change)
-        self.bindlist.grid(row=1, column=0, sticky="nsew")
-        self.bindlist.canvas.configure(bg=DARK["panel"])
-        self.binds_holder.rowconfigure(1, weight=1)
+        # 勾选模型不占位：交互全部在模态弹窗里，保留该类以复用排序与状态
+        self.bindlist = BindCheckList(box, on_change=self._on_binds_change)
 
         port_row = ttk.Frame(box, style="Card.TFrame")
-        port_row.grid(row=4, column=0, sticky="ew", pady=(SPACE["sm"], 0))
+        port_row.grid(row=3, column=0, sticky="ew", pady=(SPACE["sm"], 0))
         ttk.Label(port_row, text="端口", style="MutedCard.TLabel").pack(
             side="left", padx=(0, SPACE["sm"]))
         self.ent_port = RoundField(port_row, textvariable=self.v_port, width=64,
@@ -182,9 +175,8 @@ class MainLayoutMixin:
         ttk.Label(port_row, text="多个网卡共用同一端口", style="MutedCard.TLabel",
                   font=f_small()).pack(side="left", padx=(SPACE["md"], 0))
 
-        self.config_widgets += [self.bindlist, self.ent_port, self.btn_port]
-        self._binds_expanded = False
-        self._apply_binds_expanded()
+        self.config_widgets += [self.bindlist, self.ent_port, self.btn_port,
+                                self.btn_binds]
 
     def _build_advanced_card(self, parent: ttk.Frame, row: int) -> None:
         """高级设置只保留一个入口，内容全部收进弹窗。"""

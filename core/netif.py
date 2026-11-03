@@ -431,3 +431,26 @@ def preferred_lan_ip(items: list[NetIf] | None = None) -> str:
                 and not item.is_wildcard and item.is_up:
             return item.address
     return "127.0.0.1"
+
+
+def sort_loopback_last(addresses) -> list[str]:
+    """地址去重并让回环垫底，其余保持原顺序（辅助状态展示用）。"""
+    plain: list[str] = []
+    loop: list[str] = []
+    seen: set[str] = set()
+    for raw in addresses:
+        addr = (raw or "").strip()
+        if not addr or addr.lower() in seen:
+            continue
+        seen.add(addr.lower())
+        try:
+            is_loop = ipaddress.ip_address(addr).is_loopback
+        except ValueError:
+            is_loop = False
+        (loop if is_loop else plain).append(addr)
+    return plain + loop
+
+
+def ip_summary(addresses) -> str:
+    """紧凑的 IP 摘要：单个就是 IP，多个用 · 分隔。"""
+    return " · ".join(sort_loopback_last(addresses))
