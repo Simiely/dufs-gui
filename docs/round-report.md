@@ -410,3 +410,65 @@ Win10 直角接受。证据：`spike-legacy-rgn.png` / `spike-legacy-rgn-zoom.pn
 - 单测 207 OK（skipped=1），资源版本 `v=2184def7f1`，产物 `dist\DufsGui-v1.6.3.exe`，
   15,730,446 B，SHA256 `7c8c402257aeb6789d6b2238a2fe594c9c3c9e5015b9bd86d52b74d1cb87b6c3`。
 
+## 16. 批次 11：原生弹窗换成自绘弹窗（v1.6.4）
+
+### 影响面：16 个原生调用点
+
+| # | 位置（原行号） | 所在函数 / 触发 | 用途 | 返回值用法 | 改为 |
+|---|----------------|-----------------|------|-----------|------|
+| 1 | 122 | `DOMContentLoaded`（async） | 页面数据缺失 | 无 | `toastAlert` |
+| 2 | 640 | 下载链接 click（async） | 下载失败 | 无 | `toastAlert` |
+| 3 | 678 | `$newFolder` click（原非 async） | 新建文件夹 | `prompt` 字符串，`if (name)` 判空 | `askPrompt` + 监听改 `async` |
+| 4 | 687 | `$newFile` click（原非 async） | 新建文件 | 同上 | `askPrompt` + 监听改 `async` |
+| 5 | 756 | `setupEditorPage`（async） | 读取文件失败 | 无 | `toastAlert` |
+| 6 | 780 | `doDeletePath`（async） | 删除确认 | `confirm` 布尔，`!confirm` 直接 return | `askConfirm` |
+| 7 | 789 | `doDeletePath` catch | 删除失败 | 无（上游误用 `file.name`） | `toastAlert`，并修正为 `name` |
+| 8 | 815 | `doMovePath`（async） | 移动路径 | `prompt` 字符串，空值 return | `askPrompt`（预填当前路径、必填） |
+| 9 | 827 | `doMovePath` | 覆盖确认 | `confirm` 布尔 | `askConfirm` |
+| 10 | 840 | `doMovePath` catch | 移动失败 | 无 | `toastAlert` |
+| 11 | `renamePath`（运行时注入） | 重命名名称 | `prompt` 字符串，空/同名 return | `askPrompt`（必填 + 含 `/` 校验） |
+| 12 | `renamePath` | 重命名覆盖确认 | `confirm` 布尔 | `askConfirm` |
+| 13 | `renamePath` | 重命名失败 | 无 | `toastAlert` |
+| 14 | 856 | `saveChange`（async） | 保存失败 | 无 | `toastAlert` |
+| 15 | 897 | `createFolder`（async） | 创建文件夹失败 | 无 | `toastAlert` |
+| 16 | 912 | `createFile`（async） | 创建文件失败 | 无 | `toastAlert` |
+
+合计 `askConfirm` 3、`askPrompt` 4、`toastAlert` 9。除两个新建按钮的 click 监听外，
+其余调用所在函数原本就是 `async`，只需加 `await`；`renamePath` 里原来的
+「名称不能包含 /」alert 合并进 `askPrompt` 的 `validate`，不再单独弹一次。
+
+> 上游网页上传本身没有覆盖确认（`PUT` 直接覆盖），覆盖确认只出现在移动/重命名；
+> 因此回归用「重命名到已存在文件名」验证同一确认弹窗，不额外新增行为。
+
+### 实现
+
+- `_DIALOG_RUNTIME` 定义 Promise 版 `askConfirm` / `askPrompt` / `toastAlert`，
+  返回值对齐原生：bool / `string|null` / `undefined`。
+- 所有调用点用整段锚点替换（`_DIALOG_PATCHES`）；任一锚点数量不为 1 或仍残留
+  `alert(`/`prompt(`/`confirm(` 时整体跳过，避免半自绘半原生。
+- 视觉：遮罩 `rgba(0,0,0,.55)`，面板 `#2c2c2e`、圆角 12、内边距 16，标题 600，
+  正文 `--text-secondary`，按钮 1px 描边圆角 8；危险确认沿用同一主按钮造型（accent 描边 +
+  淡蓝底），不做红色特殊化。
+- 交互：Enter 确认 / Esc 取消 / 遮罩点击取消；prompt 打开即聚焦并全选，
+  输入框与搜索框一致（深色底、圆角 8、1px 描边、focus 描边变亮）；
+  空值、含 `/` 校验保留原语义；Tab 焦点在弹窗内循环；打开时记录并设置背景
+  `inert` + `aria-hidden`，关闭后恢复原值。
+- 只改覆盖副本；仓库 `assets/` 未动，资源版本随内容变为 `v=1c7db5e125`。
+
+### 验证
+
+无头 Edge（Playwright `channel=msedge`）30 项断言全部通过，覆盖：
+删除→确认（文件 404）、删除→Esc（文件仍 200）、遮罩点击取消（文件仍 200）、
+重命名→中文名（新名 200 / 旧名 404）、重命名→Esc（名称不变）、
+重命名覆盖确认（内容替换成功）、空值与含 `/` 被拦截、错误 alert（新建文件失败）、
+Tab 焦点不跑出弹窗、背景 inert/aria-hidden 恢复、520px 窄屏不溢出，
+以及全程 `dialog` 事件为 0（没有浏览器原生弹窗）。
+
+截图：`round11-delete-confirm.png`、`round11-rename-prompt.png`、
+`round11-overwrite-confirm.png`、`round11-error-alert.png`、
+`round11-dialog-closeup.png`（2x 遮罩+圆角特写）、`round11-dialog-520.png`。
+
+- 单测 207 OK（skipped=1）；产物 `dist\DufsGui-v1.6.4.exe`，15,732,766 B，
+  SHA256 `0a143c474f2b67b76deaac1ae7ac713a4e8a82e3a00a372835e22e6a489d401f`。
+
+

@@ -171,6 +171,103 @@ body::before {
   .paths-table .cell-actions .action-btn:first-child { margin-left: 0; }
   .paths-table .cell-actions .action-btn .act-text { display: none; }
 }
+
+/* ===== 自绘对话框：替换原生 confirm/prompt/alert ===== */
+.dg-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, .55);
+}
+.dg-modal {
+  width: min(380px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 16px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 12px;
+  background: #2c2c2e;
+  color: var(--text-primary);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .45);
+}
+.dg-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.dg-message {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dg-input {
+  width: 100%;
+  height: 32px;
+  margin-top: 12px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-secondary);
+  border-radius: 8px;
+  background: #1b1e23;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+.dg-input:focus {
+  border-color: var(--text-accent);
+  box-shadow: 0 0 0 2px rgba(79, 156, 249, .18);
+}
+.dg-input.dg-invalid { border-color: #f0a35e; }
+.dg-input::selection {
+  background: rgba(79, 156, 249, .35);
+  color: var(--text-primary);
+}
+.dg-error {
+  min-height: 16px;
+  margin-top: 6px;
+  color: #f0a35e;
+  font-size: 11.5px;
+}
+.dg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.dg-btn {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dg-btn:hover {
+  background: #3a3a3c;
+  color: var(--text-primary);
+}
+.dg-btn:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: 1px;
+}
+.dg-btn-primary {
+  border-color: var(--text-accent);
+  background: rgba(79, 156, 249, .12);
+  color: var(--text-primary);
+}
+.dg-btn-primary:hover { background: rgba(79, 156, 249, .22); }
 """
 
 #: 站点图标：dufs 官方引用 ``__ASSETS_PREFIX__favicon.ico``。
@@ -391,6 +488,352 @@ def patch_action_buttons(js: str) -> tuple[str | None, str]:
     return js, f"操作按钮已改为图标+文字（{len(_ACTION_PATCHES)} 处，移动/重命名已拆分）"
 
 
+#: 自绘对话框运行时：askConfirm / askPrompt / toastAlert。
+#: 原生 confirm/prompt 是同步阻塞，改写成 Promise 后所有调用点必须 await。
+_DIALOG_RUNTIME = r"""
+/* ===== DufsGui 自绘对话框：askConfirm / askPrompt / toastAlert ===== */
+(function () {
+  let locked = [];
+  let active = null;
+
+  function lockBackground(mask) {
+    locked = Array.prototype.slice.call(document.body.children).filter(function (el) {
+      return el !== mask;
+    });
+    locked.forEach(function (el) {
+      el.__dgPrev = [el.inert, el.getAttribute("aria-hidden")];
+      el.inert = true;
+      el.setAttribute("aria-hidden", "true");
+    });
+  }
+
+  function unlockBackground() {
+    locked.forEach(function (el) {
+      var prev = el.__dgPrev || [false, null];
+      el.inert = !!prev[0];
+      if (prev[1] === null) el.removeAttribute("aria-hidden");
+      else el.setAttribute("aria-hidden", prev[1]);
+      delete el.__dgPrev;
+    });
+    locked = [];
+  }
+
+  function focusables(panel) {
+    return Array.prototype.slice.call(
+      panel.querySelectorAll('button, input, [href], [tabindex]:not([tabindex="-1"])')
+    ).filter(function (el) {
+      return !el.disabled && el.offsetParent !== null;
+    });
+  }
+
+  function openDialog(kind, opts) {
+    opts = opts || {};
+    if (active) active.cancel();
+
+    return new Promise(function (resolve) {
+      var mask = document.createElement("div");
+      mask.className = "dg-mask";
+      var panel = document.createElement("div");
+      panel.className = "dg-modal";
+      panel.setAttribute("role", "dialog");
+      panel.setAttribute("aria-modal", "true");
+
+      var title = document.createElement("div");
+      title.className = "dg-title";
+      title.id = "dg-title-" + Date.now();
+      title.textContent = opts.title || (kind === "confirm" ? "请确认" : kind === "prompt" ? "请输入" : "提示");
+      panel.setAttribute("aria-labelledby", title.id);
+      panel.appendChild(title);
+
+      if (opts.message) {
+        var message = document.createElement("div");
+        message.className = "dg-message";
+        message.textContent = opts.message;
+        panel.appendChild(message);
+      }
+
+      var input = null;
+      var error = null;
+      if (kind === "prompt") {
+        input = document.createElement("input");
+        input.type = "text";
+        input.className = "dg-input";
+        input.value = opts.value || "";
+        if (opts.placeholder) input.placeholder = opts.placeholder;
+        input.setAttribute("aria-label", opts.inputLabel || opts.title || "输入");
+        panel.appendChild(input);
+        error = document.createElement("div");
+        error.className = "dg-error";
+        error.setAttribute("role", "status");
+        panel.appendChild(error);
+      }
+
+      var actions = document.createElement("div");
+      actions.className = "dg-actions";
+      panel.appendChild(actions);
+
+      var okBtn = null;
+
+      function finish(value) {
+        document.removeEventListener("keydown", onKey, true);
+        unlockBackground();
+        if (mask.parentNode) mask.parentNode.removeChild(mask);
+        active = null;
+        resolve(value);
+      }
+
+      function cancel() {
+        finish(kind === "prompt" ? null : kind === "confirm" ? false : undefined);
+      }
+
+      function showError(text) {
+        if (!error) return;
+        error.textContent = text;
+        input.classList.add("dg-invalid");
+        input.focus();
+      }
+
+      function submit() {
+        if (kind === "prompt") {
+          var value = input.value;
+          var invalid = opts.validate ? (opts.validate(value) || "") : "";
+          if (!invalid && opts.required !== false && !value.trim()) invalid = "不能为空";
+          if (invalid) { showError(invalid); return; }
+          finish(value);
+          return;
+        }
+        finish(kind === "confirm" ? true : undefined);
+      }
+
+      function addButton(text, primary, handler) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "dg-btn" + (primary ? " dg-btn-primary" : "");
+        btn.textContent = text;
+        btn.addEventListener("click", handler);
+        actions.appendChild(btn);
+        return btn;
+      }
+
+      if (kind !== "alert") addButton(opts.cancelText || "取消", false, cancel);
+      okBtn = addButton(opts.confirmText || "确定", true, submit);
+
+      function onKey(e) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          cancel();
+        } else if (e.key === "Enter") {
+          if (kind !== "prompt" || document.activeElement === input) {
+            e.preventDefault();
+            submit();
+          }
+        } else if (e.key === "Tab") {
+          var list = focusables(panel);
+          if (!list.length) { e.preventDefault(); return; }
+          var first = list[0];
+          var last = list[list.length - 1];
+          if (!panel.contains(document.activeElement)) {
+            e.preventDefault();
+            first.focus();
+          } else if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+
+      if (input) {
+        input.addEventListener("input", function () {
+          error.textContent = "";
+          input.classList.remove("dg-invalid");
+        });
+      }
+      mask.addEventListener("mousedown", function (e) {
+        if (e.target === mask) cancel();
+      });
+      document.addEventListener("keydown", onKey, true);
+
+      document.body.appendChild(mask);
+      mask.appendChild(panel);
+      lockBackground(mask);
+      active = { cancel: cancel };
+      window.setTimeout(function () {
+        if (input) { input.focus(); input.select(); }
+        else okBtn.focus();
+      }, 0);
+    });
+  }
+
+  window.askConfirm = function (opts) {
+    return openDialog("confirm", opts).then(function (v) { return v === true; });
+  };
+  window.askPrompt = function (opts) {
+    return openDialog("prompt", opts);
+  };
+  window.toastAlert = function (opts) {
+    return openDialog("alert", opts).then(function () { return undefined; });
+  };
+})();
+"""
+
+
+#: 原生调用点 → 自绘 Promise 弹窗。全部基于"汉化 + 操作按钮改写"后的文本，
+#: 任一处锚点不唯一就整体跳过，避免出现一半自绘一半原生。
+_DIALOG_PATCHES: tuple[tuple[str, str], ...] = (
+    (
+        '''    alert("页面数据缺失，请刷新重试");''',
+        '''    await toastAlert({ title: "提示", message: "页面数据缺失，请刷新重试" });''',
+    ),
+    (
+        '''        alert(`下载失败：${err.message}`);''',
+        '''        await toastAlert({ title: "下载失败", message: err.message });''',
+    ),
+    (
+        '''  $newFolder.addEventListener("click", () => {
+    const name = prompt("输入文件夹名称");
+    if (name) createFolder(name);
+  });''',
+        '''  $newFolder.addEventListener("click", async () => {
+    const name = await askPrompt({
+      title: "新建文件夹",
+      message: "输入文件夹名称",
+      confirmText: "创建",
+      required: true,
+    });
+    if (name) createFolder(name);
+  });''',
+    ),
+    (
+        '''  $newFile.addEventListener("click", () => {
+    const name = prompt("输入文件名称");
+    if (name) createFile(name);
+  });''',
+        '''  $newFile.addEventListener("click", async () => {
+    const name = await askPrompt({
+      title: "新建文件",
+      message: "输入文件名称",
+      confirmText: "创建",
+      required: true,
+    });
+    if (name) createFile(name);
+  });''',
+    ),
+    (
+        '''    alert(`读取文件失败：${err.message}`);''',
+        '''    await toastAlert({ title: "读取失败", message: err.message });''',
+    ),
+    (
+        '''async function doDeletePath(name, url, cb) {
+  if (!confirm(`删除「${name}」？`)) return;''',
+        '''async function doDeletePath(name, url, cb) {
+  const okDelete = await askConfirm({
+    title: "删除确认",
+    message: `确定删除「${name}」吗？删除后无法恢复。`,
+    confirmText: "删除",
+    danger: true,
+  });
+  if (!okDelete) return;''',
+    ),
+    (
+        '''    alert(`无法删除「${file.name}」：${err.message}`);''',
+        '''    await toastAlert({ title: "删除失败", message: `无法删除「${name}」：${err.message}` });''',
+    ),
+    (
+        '''  let newPath = prompt("输入新路径", filePath);''',
+        '''  let newPath = await askPrompt({
+    title: "移动到",
+    message: "输入完整的新路径（以 / 开头）",
+    value: filePath,
+    confirmText: "移动",
+    required: true,
+  });''',
+    ),
+    (
+        '''    if (res1.status === 200) {
+      if (!confirm("覆盖已存在的文件？")) {
+        return;
+      }
+    }''',
+        '''    if (res1.status === 200) {
+      if (!(await askConfirm({
+        title: "覆盖文件",
+        message: "目标位置已存在同名文件，确定覆盖吗？",
+        confirmText: "覆盖",
+        danger: true,
+      }))) {
+        return;
+      }
+    }''',
+    ),
+    (
+        '''    alert(`无法移动「${filePath}」到「${newPath}」：${err.message}`);''',
+        '''    await toastAlert({ title: "移动失败", message: `无法移动「${filePath}」到「${newPath}」：${err.message}` });''',
+    ),
+    (
+        '''  const name = prompt("输入新名称", file.name);
+  if (!name || name === file.name) return;
+  if (name.includes("/")) {
+    alert("名称不能包含「/」，跨目录请使用「移动」");
+    return;
+  }''',
+        '''  const name = await askPrompt({
+    title: "重命名",
+    message: `输入「${file.name}」的新名称`,
+    value: file.name,
+    confirmText: "重命名",
+    required: true,
+    validate: v => v.includes("/") ? "名称不能包含「/」，跨目录请使用「移动」" : "",
+  });
+  if (!name || name === file.name) return;''',
+    ),
+    (
+        '''      if (!confirm("覆盖已存在的文件？")) return;''',
+        '''      if (!(await askConfirm({
+        title: "覆盖文件",
+        message: "目标位置已存在同名文件，确定覆盖吗？",
+        confirmText: "覆盖",
+        danger: true,
+      }))) return;''',
+    ),
+    (
+        '''    alert(`无法重命名「${file.name}」：${err.message}`);''',
+        '''    await toastAlert({ title: "重命名失败", message: `无法重命名「${file.name}」：${err.message}` });''',
+    ),
+    (
+        '''    alert(`保存文件失败：${err.message}`);''',
+        '''    await toastAlert({ title: "保存失败", message: err.message });''',
+    ),
+    (
+        '''    alert(`无法创建文件夹「${name}」：${err.message}`);''',
+        '''    await toastAlert({ title: "创建失败", message: `无法创建文件夹「${name}」：${err.message}` });''',
+    ),
+    (
+        '''    alert(`无法创建文件「${name}」：${err.message}`);''',
+        '''    await toastAlert({ title: "创建失败", message: `无法创建文件「${name}」：${err.message}` });''',
+    ),
+)
+
+
+def patch_native_dialogs(js: str) -> tuple[str | None, str]:
+    """把所有原生 confirm/prompt/alert 换成自绘 Promise 弹窗。"""
+    bad = [(a.splitlines()[0].strip()[:42], js.count(a))
+           for a, _ in _DIALOG_PATCHES if js.count(a) != 1]
+    if bad:
+        return None, (f"原生弹窗调用结构不符，未替换（{len(bad)} 处："
+                      + "；".join(f"{name}×{n}" for name, n in bad[:3]) + "）")
+    for anchor, replacement in _DIALOG_PATCHES:
+        js = js.replace(anchor, replacement)
+    leftover = [p for p in ("alert(", "prompt(", "confirm(") if p in js]
+    if leftover:
+        return None, f"仍残留原生调用：{', '.join(leftover)}"
+    return (_DIALOG_RUNTIME + "\n" + js,
+            f"原生弹窗已全部替换（alert {js.count('toastAlert({')} 处、"
+            f"prompt {js.count('askPrompt({')} 处、confirm {js.count('askConfirm({')} 处）")
+
+
 def emoji_favicon_link(emoji: str = FAVICON_EMOJI) -> str:
     """内联 SVG data URI 的 emoji 站点图标。"""
     svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
@@ -520,6 +963,10 @@ def prepare_overlay(source_dir: str, title: str, favicon_path: str,
             notes.append(msg)
             if actioned is not None:
                 text = actioned
+            dialogs, msg = patch_native_dialogs(text)
+            notes.append(msg)
+            if dialogs is not None:
+                text = dialogs
             if text != original:
                 try:
                     js_path.write_text(text, encoding="utf-8")

@@ -1,6 +1,6 @@
 # AGENTS.md · 项目规则
 
-> 📌 **代码基线**：2026-11-03 v1.6.3（批次 10：emoji 站点图标 + 操作按钮拆分/统一）
+> 📌 **代码基线**：2026-11-03 v1.6.4（批次 11：共享页原生弹窗换成自绘弹窗）
 > 后续更新请追加新提交并在 CHANGELOG 记录；**不要引用已不在仓库历史中的 commit**。
 
 ## 技术栈
@@ -72,7 +72,7 @@
 
 ```bat
 python -m pip install -r requirements.txt   :: 构建依赖（PyInstaller 6.22.3）
-build.bat              :: 打正式单文件 exe（dist\DufsGui-v1.6.3.exe）
+build.bat              :: 打正式单文件 exe（dist\DufsGui-v1.6.4.exe）
 build_debug.bat        :: 诊断版：环境体检 + 控制台 + 抓输出（排错先跑它）
 run_debug.bat          :: 只运行已有 exe 并抓取全部输出
 python main.py         :: 源码直接跑
