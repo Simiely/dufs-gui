@@ -1,6 +1,6 @@
 # AGENTS.md · 项目规则
 
-> 📌 **代码基线**：2026-11-03 v1.6.4（批次 11：共享页原生弹窗换成自绘弹窗）
+> 📌 **代码基线**：2026-11-04 v1.6.13（批次 13：选择文案、网页顶栏对齐、默认最小窗口）`a074b71`
 > 后续更新请追加新提交并在 CHANGELOG 记录；**不要引用已不在仓库历史中的 commit**。
 
 ## 技术栈
@@ -44,6 +44,16 @@
     图标来自 `index.html` 引用的 `favicon.ico`；启动时复制到 `%APPDATA%\DufsGui\webui`
     再注入（`core/webtweak.py`），`--assets` 指向副本。GUI 窗口标题固定「Dufs GUI」，
     不要和网页标题混为一谈。
+13. **网页顶栏是满宽 sticky bar，不要用 `max-width` 居中**。列表 `.main` 是
+    `max-width:1280px + margin:0 auto`（外宽 1324px），顶栏要跟它共用左边线，只能改
+    `.head` 的左右 `padding: calc(22px + max(0px, (100% - 1324px) / 2))`；给顶栏加
+    `max-width` 会让背景和阴影只覆盖中间一截。≤640px 必须显式补 12px，因为运行时覆盖
+    追加在皮肤 CSS 之后，会压过原有媒体查询。
+14. **主窗默认打开尺寸 = `minsize` 960×720**，不要改回 1040×780。配置不保存窗口大小/位置，
+    每次启动都按默认值；先 `minsize` 后 `geometry`，Tk 会把小于最小值的 geometry 钳回。
+    改小 `minsize` 前先量底线：当前最下缘「高级设置」695px、最右缘二维码按钮 927px，
+    低于 960×720 就会裁切。发布 exe 未声明 DPI 感知，150% 由系统位图放大，不要据此调整
+    minsize 数值。
 
 ## 约定
 
@@ -72,7 +82,7 @@
 
 ```bat
 python -m pip install -r requirements.txt   :: 构建依赖（PyInstaller 6.22.3）
-build.bat              :: 打正式单文件 exe（dist\DufsGui-v1.6.4.exe）
+build.bat              :: 打正式单文件 exe（dist\DufsGui-v1.6.13.exe）
 build_debug.bat        :: 诊断版：环境体检 + 控制台 + 抓输出（排错先跑它）
 run_debug.bat          :: 只运行已有 exe 并抓取全部输出
 python main.py         :: 源码直接跑
