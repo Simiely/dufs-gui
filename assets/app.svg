@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Dufs GUI">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#41528C"/><stop offset="1" stop-color="#161E38"/>
+</linearGradient>
+<linearGradient id="folder" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#FBBE4E"/><stop offset="1" stop-color="#E2911B"/>
+</linearGradient>
+</defs>
+<rect x="3.5" y="3.5" width="249" height="249" rx="60" fill="url(#bg)" stroke="#FFFFFF" stroke-opacity=".11" stroke-width="1"/>
+<path d="M42 117V99c0-7 5-12 12-12h52c5 0 9 2 12 6l11 15z" fill="#FFC762"/>
+<rect x="38" y="100" width="180" height="115" rx="13.5" fill="url(#folder)"/>
+<rect x="38" y="175" width="180" height="40" rx="13.5" fill="#E2911B"/>
+<rect x="48" y="107" width="160" height="2.5" rx="1.25" fill="#FFE0A0"/>
+<path d="M128 74l43.75 66h-37.25V197.5h-13V140H84.25z" fill="#fff"/>
+</svg>

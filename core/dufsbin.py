@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -205,15 +206,59 @@ def install_custom(path: str | os.PathLike) -> Path:
     return target
 
 
-def version(binary: Path) -> str:
-    """读取 dufs 版本号，失败时返回空串。"""
+def _version_cache_file() -> Path:
+    return app_data_dir() / "cache" / "dufs_version.json"
+
+
+def _cache_key(binary: Path) -> str:
+    st = binary.stat()
+    return f"{binary.resolve()}|{st.st_size}|{int(st.st_mtime)}"
+
+
+def _cached_version(key: str) -> str | None:
     try:
-        out = subprocess.run([str(binary), "--version"], capture_output=True,
+        obj = json.loads(_version_cache_file().read_text(encoding="utf-8"))
+        if obj.get("key") == key:
+            return str(obj.get("version") or "")
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _store_version(key: str, text: str) -> None:
+    try:
+        f = _version_cache_file()
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"key": key, "version": text}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def version(binary: Path) -> str:
+    """读取 dufs 版本号，失败时返回空串。
+
+    `dufs --version` 是一次子进程启动（本机约 20-30ms）；按「路径+大小+mtime」
+    缓存结果，热启动直接读缓存，只有 dufs 换版本时才重新探测。
+    """
+    p = Path(binary)
+    try:
+        key = _cache_key(p)
+    except OSError:
+        key = ""
+    if key:
+        hit = _cached_version(key)
+        if hit is not None:
+            return hit
+    try:
+        out = subprocess.run([str(p), "--version"], capture_output=True,
                              text=True, timeout=10,
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0)
-        return (out.stdout or out.stderr).strip().splitlines()[0] if out.returncode == 0 else ""
+        text = (out.stdout or out.stderr).strip().splitlines()[0] if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError, IndexError):
         return ""
+    if key and text:
+        _store_version(key, text)
+    return text
 
 
 def parse_version(text: str) -> str:

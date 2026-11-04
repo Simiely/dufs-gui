@@ -29,7 +29,7 @@ class BindCheckList(ttk.Frame):
 
     def __init__(self, master, on_change: Callable[[int], None] | None = None,
                  *, compact: bool = False, visible_rows: int = VISIBLE_ROWS,
-                 text_budget: int = 0):
+                 text_budget: int = 0, headless: bool = False):
         c = DARK
         super().__init__(master, style="TFrame")
         self._on_change = on_change
@@ -38,11 +38,19 @@ class BindCheckList(ttk.Frame):
         self._visible_rows = max(1, visible_rows)
         self._text_budget = text_budget       # 紧凑模式 IP+名称的像素预算，0=不限
         self._scrollable = False
+        self._headless = headless             # 只做勾选模型，不建任何行控件
         self.items: list[NetIf] = []
         self._vars: list[tk.BooleanVar] = []
         self._rows: list[dict] = []
         self._focus_index = 0
         self._enabled = True
+
+        if headless:
+            self.canvas = None
+            self.vsb = None
+            self.inner = None
+            self._window = None
+            return
 
         height = self._row_height * visible_rows
         self.canvas = tk.Canvas(self, bg=c["panel"], highlightthickness=0,
@@ -73,7 +81,11 @@ class BindCheckList(ttk.Frame):
         for index, item in enumerate(self.items):
             var = tk.BooleanVar(value=item.bindable and item.address in selected_set)
             self._vars.append(var)
-            self._rows.append(self._make_row(index, item, var))
+            if not self._headless:
+                self._rows.append(self._make_row(index, item, var))
+        if self._headless:
+            self._notify()
+            return
         self._sync_scrollregion()
         self._sync_width()
         # 行数不超出可视区时收起滚动条，不占右侧宽度
@@ -126,9 +138,14 @@ class BindCheckList(ttk.Frame):
         except Exception:
             pass
 
+    def _no_canvas(self) -> bool:
+        return self.canvas is None
+
     def set_enabled(self, enabled: bool) -> None:
         """运行中禁用勾选与键盘操作，但保留深色外观。"""
         self._enabled = bool(enabled)
+        if self._no_canvas():
+            return
         try:
             self.canvas.configure(takefocus=bool(enabled),
                                   cursor="hand2" if enabled else "arrow")

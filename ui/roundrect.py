@@ -11,7 +11,11 @@ Pillow/GDI+ 依赖。Pillow 的体积/导入实测见 docs/round-report.md。
 
 from __future__ import annotations
 
+import hashlib
+import os
+import sys
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk
 
 from core.raster import corner_png, photo, rgb, rounded_png
@@ -24,16 +28,58 @@ from core.theme import DARK, ThemedCombobox
 from .common import ui_font
 
 _PHOTO_CACHE: dict[tuple, object] = {}
+_DISK_CACHE: Path | None | bool = False      # False=未初始化，None=禁用
+
+
+def _disk_cache_dir() -> Path | None:
+    """冻结产物把角块 PNG 缓存到本地，热启动省掉纯 Python 光栅化。
+
+    只在 frozen 下启用，避免源码运行/单测往用户目录写文件。
+    """
+    global _DISK_CACHE
+    if _DISK_CACHE is not False:
+        return _DISK_CACHE
+    _DISK_CACHE = None
+    if getattr(sys, "frozen", False):
+        base = os.environ.get("LOCALAPPDATA")
+        if base:
+            d = Path(base) / "DufsGui" / "imgcache"
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+            else:
+                _DISK_CACHE = d
+    return _DISK_CACHE
 
 
 def _corner_photo(size: int, radius: int, fill, bg, corner: int,
                   border=None, border_w: int = 0, transparent: bool = False):
     key = (size, radius, fill, bg, corner, border, border_w, transparent)
     img = _PHOTO_CACHE.get(key)
-    if img is None:
-        img = photo(corner_png(size, radius, fill, bg, corner, border,
-                               border_w, transparent))
-        _PHOTO_CACHE[key] = img
+    if img is not None:
+        return img
+    png = None
+    d = _disk_cache_dir()
+    path = None
+    if d is not None:
+        path = d / (hashlib.sha1(repr(key).encode("utf-8")).hexdigest() + ".png")
+        try:
+            png = path.read_bytes()
+        except OSError:
+            png = None
+    if png is None:
+        png = corner_png(size, radius, fill, bg, corner, border, border_w,
+                         transparent)
+        if path is not None:
+            try:
+                tmp = path.with_name(path.name + ".tmp")
+                tmp.write_bytes(png)
+                os.replace(tmp, path)
+            except OSError:
+                pass
+    img = photo(png)
+    _PHOTO_CACHE[key] = img
     return img
 
 
@@ -405,6 +451,16 @@ class RoundButton(tk.Canvas):
             self.configure(cursor="hand2" if self._state != "disabled" else "arrow")
         except Exception:
             pass
+
+    def set_text(self, text: str, width: int | None = None) -> None:
+        """换文案；传 width 时同时改宽度（窄布局降级用）。"""
+        self._label = text
+        if width is not None and width != self._width:
+            self._width = width
+            self.configure(width=width)
+            self.coords(self._text, width / 2, self._height / 2)
+        self.itemconfigure(self._text, text=text)
+        self._render()
 
     def _on_enter(self, _e=None):
         if self._state == "normal":

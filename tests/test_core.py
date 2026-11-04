@@ -244,11 +244,11 @@ class ConfigTest(unittest.TestCase):
     def test_persist(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "config.json"
-            cfg = AppConfig(recent_paths=["/a"], profiles={"x": {"port": 1}})
+            cfg = AppConfig(profiles={"x": {"port": 1}})
             save_config(cfg, p)
             back = load_config(p)
-            self.assertEqual(back.recent_paths, ["/a"])
             self.assertEqual(back.profiles["x"]["port"], 1)
+            self.assertNotIn("recent_paths", p.read_text(encoding="utf-8"))
 
     def test_web_title_validation(self):
         """网页标题做清洗与长度限制；空值表示使用 dufs 官方标题。"""
@@ -352,10 +352,45 @@ class ConfigTest(unittest.TestCase):
             self.assertIn('aria-label="重命名"', js)
             self.assertIn('class="act-text">下载', js)
             self.assertEqual(js.count('class="act-text"'), 7)
-            # 站点图标改为内联 emoji，不再引用 favicon.ico
+            # 顶栏按钮：桌面态文字 + 窄屏只留图标的样式
+            for cls, label in [
+                ("download", "下载"), ("upload-file", "上传"),
+                ("move-file", "移动"), ("delete-file", "删除"),
+                ("new-folder", "新建文件夹"), ("new-file", "新建文件"),
+            ]:
+                self.assertIn(f'class="control {cls} hidden has-text"', html)
+                self.assertIn(f'aria-label="{label}"', html)
+                self.assertIn(f'<span class="act-text">{label}</span>', html)
+            for cls, label in [("login-btn", "登录"), ("save-btn", "保存")]:
+                self.assertIn(f'class="{cls} hidden has-text"', html)
+                self.assertIn(f'aria-label="{label}"', html)
+                self.assertIn(f'<span class="act-text">{label}</span>', html)
+            self.assertEqual(html.count('aria-label="下载"'), 1)
+            self.assertIn(".toolbox .control.has-text,", css)
+            self.assertIn(".toolbox-right .has-text", css)
+            self.assertIn(".toolbox .control.has-text .act-text,", css)
+            self.assertIn("  .toolbox-right .has-text { width: 30px; padding: 0; gap: 0; }", css)
+            # 上传完成汇总：不再打勾，全部结束后统一弹窗
+            self.assertIn("window.__dgShowUploadResult", js)
+            self.assertIn("__dgUploadDone(this.name)", js)
+            self.assertIn("__dgUploadFail(this.name, reason)", js)
+            self.assertIn('this.$status.textContent = "完成";', js)
+            self.assertNotIn('this.$status.textContent = "✓";', js)
+            self.assertIn(".dg-count", css)
+            # 成功窗加「确认」主按钮；Esc/Enter 同样立即刷新
+            self.assertIn('refreshBtn.textContent = "确认";', js)
+            self.assertIn("panel.insertBefore(countdown, actions);", js)
+            self.assertIn("finish(!failed.length);", js)
+            self.assertIn('okBtn.textContent = "知道了";', js)
+            self.assertNotIn('okBtn.textContent = "确认";', js)
+            self.assertIn("display: inline-flex;", css)
+            # 站点图标改为内联 SVG（与 assets/app.svg 同一份图形），不再引用 favicon.ico
             self.assertIn("data:image/svg+xml", html)
-            self.assertIn("%F0%9F%93%A4", html)  # 📤 的 URL 编码
+            self.assertIn('type="image/svg+xml"', html)
             self.assertNotIn("favicon.ico", html)
+            from urllib.parse import quote
+            svg = (root / "assets" / "app.svg").read_text(encoding="utf-8").strip()
+            self.assertIn("data:image/svg+xml," + quote(svg, safe=""), html)
             # 原生 confirm/prompt/alert 全部换成自绘 Promise 弹窗
             self.assertIn("window.askConfirm = function", js)
             self.assertIn("window.askPrompt = function", js)
@@ -1160,6 +1195,59 @@ class ChildEnvTest(unittest.TestCase):
         prev = server._unset_dll_directory()
         self.assertEqual(prev, "C:\\Temp\\_MEI_test")
         server._restore_dll_directory(prev)
+
+
+class ShareDirActionTest(unittest.TestCase):
+    """「打开目录」的前置判断：空、缺失、目录、文件、中文+空格、UNC。"""
+
+    @staticmethod
+    def _action(raw):
+        import app
+        return app.share_dir_action(raw)
+
+    def test_empty(self):
+        for raw in ("", "   ", None):
+            action, path, note = self._action(raw)
+            self.assertEqual(action, "empty")
+            self.assertIsNone(path)
+            self.assertTrue(note, "空配置必须有提示文案")
+
+    def test_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "不存在 的目录"
+            action, path, note = self._action(str(missing))
+            self.assertEqual(action, "missing")
+            self.assertEqual(path, missing)
+            self.assertIn(str(missing), note)
+
+    def test_dir_with_unicode_and_space(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "共享 目录"
+            target.mkdir()
+            action, path, _ = self._action(str(target))
+            self.assertEqual(action, "dir")
+            self.assertEqual(path, target)
+
+    def test_file_returns_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "共享 文件.txt"
+            target.write_text("x", encoding="utf-8")
+            action, path, _ = self._action(str(target))
+            self.assertEqual(action, "file")
+            self.assertEqual(path, target)
+
+    def test_tilde_expanded(self):
+        action, path, _ = self._action("~")
+        self.assertEqual(action, "dir")
+        self.assertTrue(path.is_absolute())
+
+    def test_unc_path_kept(self):
+        unc = r"\\server\share\共享 目录"
+        with mock.patch("pathlib.Path.exists", return_value=True), \
+                mock.patch("pathlib.Path.is_file", return_value=False):
+            action, path, _ = self._action(unc)
+        self.assertEqual(action, "dir")
+        self.assertEqual(str(path), unc, "UNC 路径不得被 resolve 成盘符")
 
 
 if __name__ == "__main__":

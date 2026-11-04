@@ -87,6 +87,14 @@ tests/             标准库 unittest；tk_stub.py 提供无 tkinter 环境下�
 - 网卡选择从下拉改为勾选列表：`ui/bindlist.py` 内嵌 Frame + Canvas，行高固定 32px；
   弹窗 ≤20 行一次显示、>20 行封顶 20 行滚动（滚动条走 `Vertical.TScrollbar` 深色样式），
   小屏按工作区高度兜底；无地址网卡在弹窗层过滤。
+- 主窗启动尺寸固定为 `minsize` 960×720（客户区），不记忆上次大小/位置；Tk 实测
+  `minsize` 优先于 `geometry`：小于最小值的 geometry 会被钳回，等值时两种设置顺序结果一致。
+  960×720 下最下缘控件（高级设置 695px、日志横向滚动条 691px）与最右缘控件（二维码 927px）
+  均在窗内，无裁切。
+- 网页皮肤顶栏与文件列表共用同一条左边线：运行时覆盖把 `.head` 的左右内边距改为
+  `calc(22px + max(0px, (100% - 1324px) / 2))`，跟随 `.main` 的 1280px 居中容器
+  （外宽 = 1280 + 左右各 22px）；≤640px 断点同步为 12px。只影响 >1324px 的宽视口，
+  1280 / 1080 / 520 档位数值不变。
 
 构建与产物（P2）：
 
@@ -98,6 +106,9 @@ tests/             标准库 unittest；tk_stub.py 提供无 tkinter 环境下�
 - dufs 上游 MIT / Apache-2.0 许可原文位于 `licenses/`，由 spec 打进 `licenses/`
   随包分发；`--selftest` 的 `licenses` 行可用于确认冻结产物里确实带上了。
 - 当前本机验证产物：CPython 3.14.6 + PyInstaller 6.22.3 + Tk 8.6（详见 BUILD-INFO）。
+- 发布 exe 的 PE 清单没有 `dpiAware` 声明，属于 DPI 不感知进程：150% 缩放下由系统
+  整窗位图放大（960×720 逻辑 → 1440×1080 物理），`minsize` 数值不随 DPI 变化；
+  若将来声明 DPI 感知，需按 `dpi / 96` 同步放大 `minsize`，否则字体变大会挤压 960×720 布局。
 
 关键安全默认（P0）：
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from core import timing
 from core.theme import DARK, SPACE, fonts
 
 from .addrlist import AddressList
@@ -43,6 +44,7 @@ class MainLayoutMixin:
         self.btn_stop = RoundButton(actions, "停止", command=self._stop,
                                     width=72, kind="danger", state="disabled")
         self.btn_stop.pack(side="left", padx=(SPACE["sm"], 0))
+        timing.mark("ui_header")
 
         body = ttk.Frame(self, padding=(SPACE["lg"], 0, SPACE["lg"], SPACE["md"]))
         body.grid(row=1, column=0, sticky="nsew")
@@ -63,9 +65,11 @@ class MainLayoutMixin:
         self._build_net_card(left, 1)
         self._build_profile_card(left, 2)
         self._build_advanced_card(left, 3)
+        timing.mark("ui_left")
 
         self._build_status_card(right, 0)
         self._build_log_card(right, 1)
+        timing.mark("ui_right")
 
     def _card(self, parent: ttk.Frame, row: int, title: str,
               fill: str = "ew", pady_bottom: int = SPACE["md"],
@@ -105,22 +109,31 @@ class MainLayoutMixin:
         box.columnconfigure(1, weight=1)
         self.ent_path = RoundField(box, textvariable=self.v_path, width=1)
         self.ent_path.grid(row=1, column=0, columnspan=2, sticky="ew")
-        self.btn_browse = RoundButton(box, "选择…", command=self._browse_dir,
-                                      width=64, height=32, radius=8,
+        self.btn_browse = RoundButton(box, "选择", command=self._browse_dir,
+                                      width=56, height=32, radius=8,
                                       kind="outline", bg=DARK["panel"],
                                       font=ui_font(9, "bold"))
         self.btn_browse.grid(row=1, column=2, padx=(SPACE["sm"], 0))
-        self.lbl_recent = ttk.Label(box, text="最近", style="MutedCard.TLabel")
-        self.lbl_recent.grid(row=2, column=0, sticky="w",
-                             pady=(SPACE["sm"], 0))
-        self.cmb_recent = RoundField(box, kind="combo", width=1, height=32,
-                                     bg=DARK["panel"], state="readonly", values=[])
-        self.cmb_recent.grid(row=2, column=1, columnspan=2, sticky="ew",
-                             padx=(SPACE["sm"], 0), pady=(SPACE["sm"], 0))
-        self.cmb_recent.bind("<<ComboboxSelected>>", self._use_recent)
-        self.lbl_recent.grid_remove()
-        self.cmb_recent.grid_remove()
-        self.config_widgets += [self.ent_path, self.btn_browse, self.cmb_recent]
+        self.btn_open_dir = RoundButton(box, "打开目录",
+                                        command=self._open_share_dir,
+                                        width=76, height=32, radius=8,
+                                        kind="outline", bg=DARK["panel"],
+                                        font=ui_font(9, "bold"))
+        self.btn_open_dir.grid(row=1, column=3, padx=(SPACE["sm"], 0))
+        self.config_widgets += [self.ent_path, self.btn_browse]
+        box.bind("<Configure>", self._on_path_card_resize, add="+")
+
+    def _on_path_card_resize(self, event) -> None:
+        """卡片变窄时「打开目录」退成「目录」，把宽度优先留给路径输入框。"""
+        compact = event.width < 430
+        if compact == getattr(self, "_path_compact", None):
+            return
+        self._path_compact = compact
+        try:
+            self.btn_open_dir.set_text("目录" if compact else "打开目录",
+                                       48 if compact else 76)
+        except Exception:  # noqa: BLE001 - 窗口销毁时的 Configure 直接忽略
+            pass
 
     def _build_net_card(self, parent: ttk.Frame, row: int) -> None:
         """共享地址卡片：网址优先；底部只留 IP 摘要与「查看网卡」入口。"""
@@ -159,7 +172,8 @@ class MainLayoutMixin:
         self.btn_binds.grid(row=0, column=1, sticky="e", padx=(SPACE["sm"], 0))
 
         # 勾选模型不占位：交互全部在模态弹窗里，保留该类以复用排序与状态
-        self.bindlist = BindCheckList(box, on_change=self._on_binds_change)
+        self.bindlist = BindCheckList(box, on_change=self._on_binds_change,
+                                      headless=True)
 
         port_row = ttk.Frame(box, style="Card.TFrame")
         port_row.grid(row=3, column=0, sticky="ew", pady=(SPACE["sm"], 0))

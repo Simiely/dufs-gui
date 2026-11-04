@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
 
-from .dufsbin import app_data_dir
+from .dufsbin import app_data_dir, resource_dir
 
 MAX_TITLE_LEN = 48
 _TITLE_CONST = "__DUFS_GUI_TITLE"
@@ -106,6 +106,16 @@ _HTML_I18N: tuple[tuple[str, str, int], ...] = (
 #: 皮肤重新 fetch 也不丢。
 _TOP_BAR_OVERRIDE = """
 /* ===== DufsGui 运行时覆盖（每次启动重新生成，不修改仓库资产）===== */
+/* 顶栏内容与文件列表左缘对齐：.main 内容宽 1280 + 左右各 22px 内边距，
+   宽屏时随列表一起居中；≤640 时两者同为 12px。背景仍铺满整条顶栏 */
+.head {
+  padding-left: calc(22px + max(0px, (100% - 1324px) / 2));
+  padding-right: calc(22px + max(0px, (100% - 1324px) / 2));
+}
+@media (max-width: 640px) {
+  .head { padding-left: 12px; padding-right: 12px; }
+}
+
 /* 移除顶部渐变彩条：与页面背景同色，深色下不出现亮色断层 */
 body::before {
   content: none !important;
@@ -170,6 +180,48 @@ body::before {
   }
   .paths-table .cell-actions .action-btn:first-child { margin-left: 0; }
   .paths-table .cell-actions .action-btn .act-text { display: none; }
+}
+
+/* 顶栏工具按钮（左：下载/上传/新建/移动/删除，右：登录/保存）：
+   桌面态图标 + 文字，与操作列同一套描边圆角；DOM 里文字在图标前，故 reverse */
+.toolbox .control.has-text,
+.toolbox-right .has-text {
+  flex-direction: row-reverse;
+  width: auto;
+  height: 30px;
+  padding: 0 9px;
+  gap: 6px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background .13s ease, border-color .13s ease, color .13s ease;
+}
+.toolbox .control.has-text:hover,
+.toolbox-right .has-text:hover {
+  background: #2c2c2e;
+  border-color: var(--text-accent);
+  color: var(--text-primary);
+}
+.toolbox .control.has-text svg,
+.toolbox-right .has-text svg { width: 14px; height: 14px; flex: none; }
+.toolbox .control.has-text .act-text,
+.toolbox-right .has-text .act-text { white-space: nowrap; }
+/* 上传按钮的点击热区是 label：让图标与文字一起横排、整块可点 */
+.toolbox .control.has-text > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+}
+
+@media (max-width: 1080px) {
+  .toolbox .control.has-text,
+  .toolbox-right .has-text { width: 30px; padding: 0; gap: 0; }
+  .toolbox .control.has-text .act-text,
+  .toolbox-right .has-text .act-text { display: none; }
 }
 
 /* ===== 自绘对话框：替换原生 confirm/prompt/alert ===== */
@@ -237,6 +289,16 @@ body::before {
   color: #f0a35e;
   font-size: 11.5px;
 }
+.dg-count {
+  margin-top: 10px;
+  color: var(--text-accent);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}
+.dg-modal:focus { outline: none; }
+.dg-btn:focus { outline: none; }
+.dg-btn:focus-visible { box-shadow: 0 0 0 2px rgba(10, 132, 255, .45); }
 .dg-actions {
   display: flex;
   justify-content: flex-end;
@@ -244,6 +306,9 @@ body::before {
   margin-top: 16px;
 }
 .dg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 30px;
   padding: 0 12px;
   border: 1px solid var(--border-secondary);
@@ -271,12 +336,10 @@ body::before {
 """
 
 #: 站点图标：dufs 官方引用 ``__ASSETS_PREFIX__favicon.ico``。
-#: 覆盖副本改成内联 SVG data URI 的 emoji，不依赖外部文件、不会 404。
+#: 覆盖副本改成内联 SVG data URI，图形与应用图标（assets/app.svg）同一份，
+#: 不依赖外部文件、不会 404。
 _FAVICON_LINK = ('<link rel="icon" type="image/x-icon" '
                  'href="__ASSETS_PREFIX__favicon.ico">')
-
-#: 选 📤 而不是 🗂️/📁：16px 下托盘+箭头轮廓最清楚，浅色/深色标签栏都不糊。
-FAVICON_EMOJI = "📤"
 
 #: 重命名图标：铅笔 + 基线，与"移动"箭头、"编辑"文档图标区分。
 _RENAME_ICON = (
@@ -362,6 +425,76 @@ def localize_index_js(js: str) -> tuple[str | None, str]:
 def localize_index_html(html: str) -> tuple[str | None, str]:
     """汉化 index.html 的静态 title / aria 文案与上传任务表头。"""
     return _apply_i18n(html, _HTML_I18N, "网页静态文案")
+
+
+#: 顶栏工具按钮：桌面态图标 + 文字；窄屏由 CSS 只留图标。
+#: 锚点是**已汉化**的静态 HTML；每处必须唯一命中，否则整体跳过。
+#: DOM 顺序统一为「文字在前、图标在后」，配合 CSS row-reverse 显示成图标 + 文字。
+_TOOLBAR_TEXT_PATCHES: tuple[tuple[str, str], ...] = (
+    # 左上：打包下载当前目录 / 下载当前文件
+    (
+        '<a href="" class="control download hidden" title="下载文件" download="">',
+        '<a href="" class="control download hidden has-text" title="下载文件" '
+        'download="" aria-label="下载"><span class="act-text">下载</span>',
+    ),
+    # 左上：上传（点击热区是 <label>，文字放进 label 保证整块可点）
+    (
+        '<div class="control upload-file hidden" title="上传文件 / 文件夹">',
+        '<div class="control upload-file hidden has-text" '
+        'title="上传文件 / 文件夹" aria-label="上传">',
+    ),
+    (
+        '          </svg>\n        </label>',
+        '          </svg><span class="act-text">上传</span>\n        </label>',
+    ),
+    # 左上：移动 / 重命名（仅编辑页）
+    (
+        '<div class="control move-file hidden" title="移动 / 重命名">',
+        '<div class="control move-file hidden has-text" title="移动 / 重命名" '
+        'aria-label="移动"><span class="act-text">移动</span>',
+    ),
+    # 左上：删除（仅编辑页）
+    (
+        '<div class="control delete-file hidden" title="删除">',
+        '<div class="control delete-file hidden has-text" title="删除" '
+        'aria-label="删除"><span class="act-text">删除</span>',
+    ),
+    # 左上：新建文件夹 / 新建文件
+    (
+        '<div class="control new-folder hidden" title="新建文件夹">',
+        '<div class="control new-folder hidden has-text" title="新建文件夹" '
+        'aria-label="新建文件夹"><span class="act-text">新建文件夹</span>',
+    ),
+    (
+        '<div class="control new-file hidden" title="新建文件">',
+        '<div class="control new-file hidden has-text" title="新建文件" '
+        'aria-label="新建文件"><span class="act-text">新建文件</span>',
+    ),
+    # 右上：登录（仅启用认证且未登录）
+    (
+        '<div class="login-btn hidden" title="登录">',
+        '<div class="login-btn hidden has-text" title="登录" '
+        'aria-label="登录"><span class="act-text">登录</span>',
+    ),
+    # 右上：保存（仅编辑页且文件可编辑）
+    (
+        '<div class="save-btn hidden" title="保存文件">',
+        '<div class="save-btn hidden has-text" title="保存文件" '
+        'aria-label="保存"><span class="act-text">保存</span>',
+    ),
+)
+
+
+def patch_toolbar_text(html: str) -> tuple[str | None, str]:
+    """把顶栏仍是纯图标的按钮改成图标 + 文字（窄屏由 CSS 隐藏文字）。"""
+    text = html
+    for old, new in _TOOLBAR_TEXT_PATCHES:
+        if text.count(old) != 1:
+            return None, "顶栏按钮文字化：锚点未全部唯一命中，跳过"
+        text = text.replace(old, new, 1)
+    return text, (f"顶栏按钮文字化：已应用（{len(_TOOLBAR_TEXT_PATCHES)} 处，"
+                  "下载/上传/新建/移动/删除/登录/保存）")
+
 
 
 #: 在**已汉化**的 index.js 上拆出"重命名"，并把操作按钮改成图标 + 文字。
@@ -676,6 +809,161 @@ _DIALOG_RUNTIME = r"""
   window.toastAlert = function (opts) {
     return openDialog("alert", opts).then(function () { return undefined; });
   };
+
+  /* ===== 上传完成汇总：仅在所有文件结束后弹一次 ===== */
+  var uploadBatch = { pending: 0, done: [], failed: [] };
+
+  function uploadList(names, reasons) {
+    var lines = names.map(function (name, i) {
+      return "· " + name + (reasons ? "：" + (reasons[i] || "网络或服务器错误") : "");
+    });
+    return lines.join("\n");
+  }
+
+  window.__dgShowUploadResult = function (opts) {
+    opts = opts || {};
+    var done = opts.done || [];
+    var failed = opts.failed || [];
+    if (active) active.cancel();
+
+    var mask = document.createElement("div");
+    mask.className = "dg-mask";
+    var panel = document.createElement("div");
+    panel.className = "dg-modal";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+
+    var title = document.createElement("div");
+    title.className = "dg-title";
+    title.id = "dg-title-" + Date.now();
+    title.textContent = failed.length ? "上传完成（有文件失败）" : "上传完成";
+    panel.setAttribute("aria-labelledby", title.id);
+    panel.appendChild(title);
+
+    var message = document.createElement("div");
+    message.className = "dg-message";
+    if (!failed.length) {
+      message.textContent = "已成功上传 " + done.length + " 个文件。";
+    } else {
+      var parts = [];
+      if (done.length) {
+        parts.push("成功 " + done.length + " 个：\n" + uploadList(done));
+      } else {
+        parts.push("没有文件成功上传。");
+      }
+      parts.push("失败 " + failed.length + " 个：\n"
+        + uploadList(failed.map(function (f) { return f.name; }),
+                    failed.map(function (f) { return f.reason; })));
+      message.textContent = parts.join("\n\n");
+    }
+    panel.appendChild(message);
+
+    var actions = document.createElement("div");
+    actions.className = "dg-actions";
+    panel.appendChild(actions);
+
+    var countdown = null;
+    var timer = null;
+    var closed = false;
+
+    function finish(reload) {
+      if (closed) return;
+      closed = true;
+      if (timer) { window.clearInterval(timer); timer = null; }
+      document.removeEventListener("keydown", onKey, true);
+      unlockBackground();
+      if (mask.parentNode) mask.parentNode.removeChild(mask);
+      active = null;
+      if (reload) window.location.reload();
+    }
+
+    function onKey(e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        // 成功窗只有一个动作：Esc 也立即刷新，避免关掉后看不到新文件
+        finish(!failed.length);
+      } else if (e.key === "Enter" && !failed.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(true);
+      }
+    }
+
+    if (failed.length) {
+      var okBtn = document.createElement("button");
+      okBtn.type = "button";
+      okBtn.className = "dg-btn dg-btn-primary";
+      okBtn.textContent = "知道了";
+      okBtn.addEventListener("click", function () { finish(false); });
+      actions.appendChild(okBtn);
+    } else {
+      countdown = document.createElement("div");
+      countdown.className = "dg-count";
+      countdown.setAttribute("role", "status");
+      panel.insertBefore(countdown, actions);
+      var n = 3;
+      countdown.textContent = n + " 秒后自动刷新";
+
+      var refreshBtn = document.createElement("button");
+      refreshBtn.type = "button";
+      refreshBtn.className = "dg-btn dg-btn-primary";
+      refreshBtn.textContent = "确认";
+      refreshBtn.addEventListener("click", function () { finish(true); });
+      actions.appendChild(refreshBtn);
+
+      timer = window.setInterval(function () {
+        n--;
+        if (n > 0) {
+          countdown.textContent = n + " 秒后自动刷新";
+        } else {
+          finish(true);
+        }
+      }, 1000);
+    }
+
+    document.addEventListener("keydown", onKey, true);
+    document.body.appendChild(mask);
+    mask.appendChild(panel);
+    lockBackground(mask);
+    active = { cancel: function () { finish(false); } };
+    window.setTimeout(function () {
+      var btn = actions.querySelector("button");
+      if (btn) btn.focus();
+    }, 0);
+  };
+
+  function uploadMaybeFinish() {
+    if (uploadBatch.pending > 0) return;
+    if (!uploadBatch.done.length && !uploadBatch.failed.length) return;
+    var payload = { done: uploadBatch.done.slice(), failed: uploadBatch.failed.slice() };
+    uploadBatch.pending = 0;
+    uploadBatch.done = [];
+    uploadBatch.failed = [];
+    window.__dgShowUploadResult(payload);
+  }
+
+  window.__dgUploadStart = function () {
+    if (uploadBatch.pending === 0
+        && (uploadBatch.done.length || uploadBatch.failed.length)) {
+      uploadBatch.done = [];
+      uploadBatch.failed = [];
+    }
+    uploadBatch.pending++;
+  };
+  window.__dgUploadDone = function (name) {
+    uploadBatch.done.push(name || "未命名文件");
+    uploadBatch.pending = Math.max(0, uploadBatch.pending - 1);
+    uploadMaybeFinish();
+  };
+  window.__dgUploadFail = function (name, reason) {
+    uploadBatch.failed.push({
+      name: name || "未命名文件",
+      reason: reason || "网络或服务器错误"
+    });
+    uploadBatch.pending = Math.max(0, uploadBatch.pending - 1);
+    uploadMaybeFinish();
+  };
 })();
 """
 
@@ -834,21 +1122,89 @@ def patch_native_dialogs(js: str) -> tuple[str | None, str]:
             f"prompt {js.count('askPrompt({')} 处、confirm {js.count('askConfirm({')} 处）")
 
 
-def emoji_favicon_link(emoji: str = FAVICON_EMOJI) -> str:
-    """内联 SVG data URI 的 emoji 站点图标。"""
-    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
-           '<text x="50" y="50" font-size="88" text-anchor="middle" '
-           f'dominant-baseline="central">{emoji}</text></svg>')
+#: 上传完成反馈：批次数、完成/失败汇总，以及去掉了原来的对勾。
+_UPLOAD_FEEDBACK_PATCHES: tuple[tuple[str, str], ...] = (
+    (
+        '''    Uploader.queues.push(this);
+    Uploader.runQueue();''',
+        '''    __dgUploadStart(name);
+    Uploader.queues.push(this);
+    Uploader.runQueue();''',
+    ),
+    (
+        '''    this.$status.textContent = "✓";''',
+        '''    this.$status.textContent = "完成";''',
+    ),
+    (
+        '''    failUploaders.delete(this.idx);
+    Uploader.runnings--;
+    Uploader.runQueue();''',
+        '''    failUploaders.delete(this.idx);
+    Uploader.runnings--;
+    Uploader.runQueue();
+    __dgUploadDone(this.name);''',
+    ),
+    (
+        '''    failUploaders.set(this.idx, this);
+    Uploader.runnings--;
+    Uploader.runQueue();''',
+        '''    failUploaders.set(this.idx, this);
+    Uploader.runnings--;
+    Uploader.runQueue();
+    __dgUploadFail(this.name, reason);''',
+    ),
+    (
+        '''    this.uploadOffset = uploadOffset;
+    this.ajax();''',
+        '''    this.uploadOffset = uploadOffset;
+    __dgUploadStart(this.name);
+    this.ajax();''',
+    ),
+)
+
+
+def patch_upload_feedback(js: str) -> tuple[str | None, str]:
+    """上传全部结束后弹一次汇总窗；成功 3 秒倒计时后刷新，失败则停留。"""
+    bad = [(a.splitlines()[0].strip()[:42], js.count(a))
+           for a, _ in _UPLOAD_FEEDBACK_PATCHES if js.count(a) != 1]
+    if bad:
+        return None, (f"上传反馈结构不符，未改动（{len(bad)} 处："
+                      + "；".join(f"{name}×{n}" for name, n in bad[:3]) + "）")
+    for anchor, replacement in _UPLOAD_FEEDBACK_PATCHES:
+        js = js.replace(anchor, replacement)
+    return js, "上传完成汇总：已接入（完成/失败 + 倒计时刷新）"
+
+
+def app_icon_svg() -> str | None:
+    """应用图标的 SVG 源（assets/app.svg，随包分发）。
+
+    与 exe 的 ICO、Tk 窗口图标共用同一份图形；读不到时返回 None，
+    由调用方保留官方 favicon，避免画出半成品。
+    """
+    try:
+        svg = (resource_dir() / "assets" / "app.svg").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return svg if svg.startswith("<svg") and svg.endswith("</svg>") else None
+
+
+def app_favicon_link() -> str | None:
+    """内联 SVG data URI 的站点图标（与应用图标同形）。"""
+    svg = app_icon_svg()
+    if not svg:
+        return None
     return ('<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,'
             + quote(svg, safe="") + '">')
 
 
-def patch_favicon_html(html: str, emoji: str = FAVICON_EMOJI) -> tuple[str, str]:
-    """把官方 favicon.ico 引用换成 emoji data URI；找不到引用则原样返回。"""
+def patch_favicon_html(html: str) -> tuple[str, str]:
+    """把官方 favicon.ico 引用换成应用图标 data URI；失败则原样返回。"""
     if _FAVICON_LINK not in html:
-        return html, "未找到官方 favicon 引用，跳过 emoji 图标"
-    return (html.replace(_FAVICON_LINK, emoji_favicon_link(emoji)),
-            f"站点图标已改为内联 emoji：{emoji}")
+        return html, "未找到官方 favicon 引用，跳过站点图标"
+    link = app_favicon_link()
+    if link is None:
+        return html, "应用图标 SVG 缺失，保留官方站点图标"
+    return html.replace(_FAVICON_LINK, link), "站点图标已改为内联 SVG（与应用图标同形）"
 
 
 def patch_index_css(css: str) -> tuple[str, str]:
@@ -967,6 +1323,10 @@ def prepare_overlay(source_dir: str, title: str, favicon_path: str,
             notes.append(msg)
             if dialogs is not None:
                 text = dialogs
+            uploaded, msg = patch_upload_feedback(text)
+            notes.append(msg)
+            if uploaded is not None:
+                text = uploaded
             if text != original:
                 try:
                     js_path.write_text(text, encoding="utf-8")
@@ -986,6 +1346,10 @@ def prepare_overlay(source_dir: str, title: str, favicon_path: str,
         localized, msg = localize_index_html(original_html)
         notes.append(msg)
         text_html = localized if localized is not None else original_html
+        buttoned, msg = patch_toolbar_text(text_html)
+        notes.append(msg)
+        if buttoned is not None:
+            text_html = buttoned
         if not favicon_path:
             text_html, msg = patch_favicon_html(text_html)
             notes.append(msg)

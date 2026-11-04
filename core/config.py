@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -361,11 +362,10 @@ class ServerConfig:
 
 @dataclass
 class AppConfig:
-    """应用级配置：多套站点方案 + 最近目录 + 界面偏好。"""
+    """应用级配置：多套站点方案 + 界面偏好。"""
 
     profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
     current: str = ""
-    recent_paths: list[str] = field(default_factory=list)
     current_config: dict[str, Any] = field(default_factory=dict)
     config_version: int = CONFIG_VERSION
     #: 载入时的告警（迁移/坏配置恢复）。不落盘，只在界面日志里提示一次。
@@ -409,14 +409,9 @@ class AppConfig:
             notes.append("current 类型无效，已忽略")
 
         raw_recent = data.get("recent_paths")
-        recent: list[str] = []
-        if isinstance(raw_recent, list):
-            kept = [x for x in raw_recent if isinstance(x, str)]
-            if len(kept) != len(raw_recent):
-                notes.append("recent_paths 中有非字符串项，已忽略")
-            recent = kept
-        elif raw_recent is not None:
-            notes.append("recent_paths 类型无效，已清空")
+        if raw_recent is not None:
+            # v1.6.12 移除「最近目录」：字段在这里丢弃，文件由下一次 save_config 清理
+            notes.append("已移除「最近目录」功能，历史记录不再载入")
 
         raw_cc = data.get("current_config")
         if isinstance(raw_cc, dict):
@@ -429,7 +424,6 @@ class AppConfig:
         cfg = cls(
             profiles=profiles,
             current=current,
-            recent_paths=recent,
             current_config=current_config,
             config_version=CONFIG_VERSION,
         )
@@ -474,6 +468,46 @@ def _backup_bad(p: Path) -> Path | None:
             return None
 
 
+def _backup_recent(p: Path, data: dict[str, Any]) -> Path | None:
+    """把即将移除的「最近目录」历史备份到 config.recent-backup-<时间>.json。
+
+    同一份历史只备份一次：若已有内容相同的备份（上次启动没来得及保存配置），
+    直接复用，避免每次启动都新增一个文件。
+    """
+    raw = data.get("recent_paths")
+    if not isinstance(raw, list):
+        return None
+    paths = [x for x in raw if isinstance(x, str)]
+    if not paths:
+        return None
+
+    for old in sorted(p.parent.glob("config.recent-backup-*.json")):
+        try:
+            if json.loads(old.read_text(encoding="utf-8")).get("recent_paths") == paths:
+                return old
+        except (OSError, ValueError):
+            continue
+
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    out = p.with_name(f"config.recent-backup-{stamp}.json")
+    n = 2
+    while out.exists():
+        out = p.with_name(f"config.recent-backup-{stamp}-{n}.json")
+        n += 1
+    payload = {
+        "removed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "reason": "「最近目录」功能已移除（v1.6.12）",
+        "source": str(p),
+        "recent_paths": paths,
+    }
+    try:
+        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+    except OSError:
+        return None
+    return out
+
+
 def load_config(path: str | os.PathLike | None = None) -> AppConfig:
     """读取配置；坏文件先备份再回落默认值，并把原因写进 cfg.notice。"""
     p = config_file(path)
@@ -490,7 +524,12 @@ def load_config(path: str | os.PathLike | None = None) -> AppConfig:
         data = json.loads(raw)
         if not isinstance(data, dict):
             raise ValueError("配置根节点必须是 JSON 对象")
-        return AppConfig.from_dict(data)
+        cfg = AppConfig.from_dict(data)
+        backup = _backup_recent(p, data)
+        if backup is not None:
+            note = f"「最近目录」历史已备份为 {backup.name} 并移除"
+            cfg.notice = (cfg.notice + "；" + note) if cfg.notice else note
+        return cfg
     except ConfigTooNew as e:
         bad = _backup_bad(p)
         cfg = AppConfig()

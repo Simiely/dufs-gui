@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import os
 import queue
+import subprocess
 import time
 import tkinter as tk
 import webbrowser
@@ -18,7 +20,6 @@ from core import APP_VERSION  # 单一真源，见 core/__init__.py
 from core import dufsbin, timing, webtweak
 from core.config import (AppConfig, ServerConfig, config_file, load_config,
                          save_config)
-from core.health import HealthMonitor
 from core.instances import InstanceManager
 from core.launch import build_launch_plans
 from core.netif import apply_saved, list_interfaces, sort_loopback_last
@@ -35,6 +36,32 @@ from ui.layout import MainLayoutMixin
 
 #: 仍代表本轮共享的状态；「已停止」之后界面统一回到配置里的地址
 LIVE_STATUS = frozenset({"运行中", "无响应", "启动中", "失败", "已退出"})
+
+
+def normalize_share_path(raw: str) -> Path:
+    """把配置里的共享路径转成绝对路径：展开 ~，保留 UNC，相对路径按 cwd。"""
+    path = Path(raw.strip()).expanduser()
+    return path if path.is_absolute() else (Path.cwd() / path).resolve()
+
+
+def share_dir_action(raw: str) -> tuple[str, Path | None, str]:
+    """「打开目录」的前置判断：返回 (动作, 目标, 提示)。
+
+    动作为 ``dir`` / ``file``（打开父目录并选中）/ ``missing`` / ``empty``。
+    只判断不执行，方便单测覆盖边界；实际打开由 GUI 处理器负责。
+    """
+    text = (raw or "").strip()
+    if not text:
+        return "empty", None, "尚未配置共享目录，请先选择或填写目录。"
+    try:
+        path = normalize_share_path(text)
+        if not path.exists():
+            return "missing", path, f"共享目录不存在：{path}"
+        if path.is_file():
+            return "file", path, ""
+    except (OSError, ValueError, RuntimeError):
+        return "missing", None, f"路径无效：{text}"
+    return "dir", path, ""
 
 
 class _IdleProcess:
@@ -59,18 +86,35 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         super().__init__()
         timing.mark("tk_root")
         self.app_cfg: AppConfig = load_config()
+        timing.mark("config_loaded")
         # GUI 窗口标题固定：用户可定制的是浏览器标签页标题（高级设置里）
         self.title("Dufs GUI")
-        self.geometry("1040x780")
+        # 窗口 / 任务栏 / Alt-Tab 图标：与 exe PE 资源、网页 favicon 同一枚图形。
+        # -default 让后续所有 Toplevel 也继承（否则会退回 Tk 的羽毛图标）。
+        icon_path = str(dufsbin.resource_dir() / "assets" / "app.ico")
+        try:
+            self.iconbitmap(default=icon_path)
+        except Exception:  # noqa: BLE001 - 图标缺失不应阻断启动
+            pass
+        # Tk 只设置窗口类图标，WM_GETICON 会返回 0、由外壳回退到类图标。
+        # 等窗口映射后（_apply_window_chrome）再显式给顶层窗口挂 32/16 两枚；
+        # HICON 句柄必须存活到进程结束，挂在 self 上。
+        self._icon_path = icon_path
+        self._icon_handles: list[int] = []
+        # 默认打开尺寸 = 最小可用尺寸（960x720）：该尺寸下底部按钮行、
+        # 状态行与右侧日志列均完整可见，没有任何控件的右下缘越界。
+        # 先设 minsize 再设 geometry，实测两者相同，不依赖生效顺序。
         self.minsize(960, 720)
+        self.geometry("960x720")
 
         self.colors: dict[str, str] = dict(DARK)
 
         self.log_queue: queue.Queue = queue.Queue()
         self.runtime = DufsRuntime(self.log_queue)
         self.runtime.locate()
+        timing.mark("runtime_located")
         self.manager = InstanceManager(self.log_queue)
-        self.healths: list[tuple[str, HealthMonitor]] = []
+        self.healths: list[tuple[str, object]] = []
         self.adv_win: tk.Toplevel | None = None
         self._adv_canvas: tk.Canvas | None = None
         self.config_widgets: list[tk.Widget] = []
@@ -79,8 +123,10 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         timing.mark("vars_ready")
         self._build_ui()
         timing.mark("ui_built")
+        timing.mark("theme_start")
         self._apply_theme()
         timing.mark("theme_done")
+        timing.mark("restore_start")
         self._restore()
         self._refresh_preview()
         timing.mark("state_restored")
@@ -132,12 +178,14 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
     def _apply_theme(self) -> None:
         self.colors = apply_theme(self)
         c = self.colors
+        timing.mark("theme_styles")
         self.log_text.configure(bg=c["well"], fg="#e5e5e7", insertbackground=c["fg"],
                                 highlightbackground=c["well"],
                                 highlightcolor=c["well"],
                                 selectbackground=c["accent"],
                                 selectforeground=c["accent_fg"])
         self.dot.configure(bg=c["panel"], fg=c["muted"])
+        timing.mark("theme_widgets")
 
         if self.adv_win is not None and self.adv_win.winfo_exists():
             try:
@@ -148,16 +196,42 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
             except Exception:
                 pass
 
-        try:
-            self.update_idletasks()
-            self._apply_window_chrome()
-        except Exception:
-            pass
-
     def _apply_window_chrome(self) -> None:
         """深色标题栏 + Win11 圆角；Win10 不支持圆角时静默保持直角。"""
         enable_windows_dark_titlebar(self.winfo_id())
         enable_windows_rounded_corners(self.winfo_id())
+        self._apply_window_icon()
+
+    def _apply_window_icon(self) -> None:
+        """WM_SETICON：Tk 只设窗口类图标，这里给顶层窗口挂 32/16 两枚。
+
+        与 iconbitmap / exe 资源 / 网页 favicon 同一枚 app.ico；
+        任务栏与 Alt-Tab 读的 WM_GETICON 因此直接命中，而不是回退到类图标。
+        """
+        if self._icon_handles:  # 启动时会调用两次（首帧前 + 250ms），只挂一次
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+            user32.GetAncestor.restype = wintypes.HWND
+            user32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR,
+                                          wintypes.UINT, ctypes.c_int,
+                                          ctypes.c_int, wintypes.UINT]
+            user32.LoadImageW.restype = wintypes.HANDLE
+            user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT,
+                                            wintypes.WPARAM, wintypes.LPARAM]
+            hwnd = int(self.winfo_id())
+            hwnd = int(user32.GetAncestor(hwnd, 2) or hwnd)  # GA_ROOT：真正的顶层窗
+            for size, which in ((32, 1), (16, 0)):  # ICON_BIG / ICON_SMALL
+                h = user32.LoadImageW(None, self._icon_path, 1, size, size, 0x10)
+                if h:
+                    user32.SendMessageW(hwnd, 0x0080, which, h)  # WM_SETICON
+                    self._icon_handles.append(h)
+        except Exception:  # noqa: BLE001 - 非 Windows / 图标读取失败时退回 Tk 默认
+            pass
 
     def _set_status_color(self, kind: str = "idle") -> None:
         color = {"run": self.colors["ok"], "err": self.colors["danger"],
@@ -217,19 +291,6 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         d = filedialog.askdirectory(initialdir=initial, title="选择要共享的目录")
         if d:
             self.v_path.set(d)
-            self._add_recent(d)
-
-    def _add_recent(self, path: str) -> None:
-        rec = [p for p in self.app_cfg.recent_paths if p != path]
-        rec.insert(0, path)
-        self.app_cfg.recent_paths = rec[:10]
-        self.cmb_recent.configure(values=self.app_cfg.recent_paths)
-        self._refresh_recent_visibility()
-
-    def _use_recent(self, _e=None) -> None:
-        val = self.cmb_recent.get()
-        if val:
-            self.v_path.set(val)
 
     def _on_binds_change(self, count: int) -> None:
         self._pending_binds = self.bindlist.selected()
@@ -369,21 +430,6 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
                 text=f"还有 {hidden} 个未显示" if hidden else "")
         except Exception:
             pass
-
-    def _refresh_recent_visibility(self) -> None:
-        """没有历史路径时收起「最近」一行，把高度让给地址列表。"""
-        if not hasattr(self, "cmb_recent"):
-            return
-        # 只有 1 条（通常就是当前路径）不值得单独占一行；2 条以上才显示
-        has = len(self.app_cfg.recent_paths) >= 2
-        for widget in (self.lbl_recent, self.cmb_recent):
-            try:
-                if has:
-                    widget.grid()
-                else:
-                    widget.grid_remove()
-            except Exception:
-                pass
 
     def _copy_one_url(self, url: str) -> None:
         self.clipboard_clear()
@@ -529,10 +575,14 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
     def _restore(self) -> None:
         if self.app_cfg.notice:
             self._log(f"配置：{self.app_cfg.notice}")
-        self.bindlist.set_items(list_interfaces())
+        items = list_interfaces()
+        timing.mark("netif_listed")
+        self.bindlist.set_items(items)
+        timing.mark("bindlist_items")
         raw = dict(self.app_cfg.current_config or {})
         cfg = ServerConfig.from_dict(raw)
         self.load_to_form(cfg)
+        timing.mark("form_loaded")
         if raw.get("bind") or raw.get("binds"):
             # 用户保存过选择：保持（失效地址单独提示并回退）
             self._apply_saved_binds(cfg.effective_binds())
@@ -540,10 +590,6 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
             # 首次启动：默认选最活跃的非回环网卡，而不是 127.0.0.1
             self.bindlist.select_defaults()
             self._pending_binds = self.bindlist.selected()
-        if self.v_path.get():
-            self._add_recent(self.v_path.get())
-        self.cmb_recent.configure(values=self.app_cfg.recent_paths)
-        self._refresh_recent_visibility()
         self._reload_profiles(self.app_cfg.current)
         info = self.runtime.info
         if info is None:
@@ -656,7 +702,6 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         self._set_config_enabled(False)
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
-        self._add_recent(cfg.share_path)
         self._save()
 
         for st in self.manager.running_states:
@@ -683,6 +728,8 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
 
             def emit(kind, detail, b=bind):
                 self.log_queue.put((kind, f"{b}|{detail}"))
+
+            from core.health import HealthMonitor  # 启动时才用，避免拉高导入耗时
 
             monitor = HealthMonitor(lambda u=url: u, emit)
             monitor.start()
@@ -798,6 +845,29 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
         self.clipboard_clear()
         self.clipboard_append(text)
         self._log(f"已复制：{text}")
+
+    def _open_share_dir(self) -> None:
+        """用资源管理器打开当前共享根目录（文件则打开父目录并选中）。"""
+        action, path, note = share_dir_action(self.current_config().share_path)
+        if action == "empty":
+            dialogs.show_info(self, "尚未配置共享目录", note)
+            return
+        if action == "missing":
+            self._log(note)
+            dialogs.show_warning(self, "共享目录不存在",
+                                 note + "\n\n请检查路径，或重新选择目录。")
+            return
+        try:
+            if action == "file":
+                # /select, 必须与路径连成一个参数，否则含空格时会被拆开
+                subprocess.Popen(f'explorer /select,"{path}"')
+            else:
+                os.startfile(str(path))
+        except Exception as exc:  # noqa: BLE001 - 交给弹窗，不让按钮抛异常
+            self._log(f"打开目录失败：{exc}")
+            dialogs.show_error(self, "打开目录失败", f"{path}\n\n{exc}")
+            return
+        self._log(f"已在资源管理器打开：{path}")
 
     # ---------------- 失败详情（有错误才出现） ----------------
     def _toggle_detail(self) -> None:
@@ -958,7 +1028,20 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
 
 
 def main() -> None:
+    timing.mark("main_enter")
     app = DufsGui()
+    # 只做一次布局：映射后再上深色标题栏，最后交给 update() 完成首帧绘制。
+    app.update_idletasks()
+    timing.mark("first_idle")
+    try:
+        app._apply_window_chrome()
+    except Exception:
+        pass
+    timing.mark("chrome_ready")
+    app.update()
+    timing.mark("first_frame")
+    app.update()
+    timing.mark("second_update")
     timing.mark("mainloop")
     app.mainloop()
 

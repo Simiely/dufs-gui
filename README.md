@@ -18,7 +18,7 @@
 
 ## 快速开始
 
-**已有构建产物**：双击 `dist\DufsGui-v1.6.4.exe` 即可（onefile 首启自解压约 1–3 秒）。
+**已有构建产物**：双击 `dist\DufsGui-v1.6.13.exe` 即可（单文件外壳；首次启动解压到本地缓存，之后复用）。
 
 **从源码构建**：双击 `build.bat`，它自动完成「取 dufs → 打包 → `--selftest` → 生成校验和」。
 只有缺 PyInstaller 时会停下并打印一行可复制的安装命令
@@ -31,11 +31,15 @@
 
 ### 首次启动预期
 
-- onefile 首次启动会先解压到 `%TEMP%\_MEI*`，通常 1–3 秒；属正常现象。
+- 首次启动会把内置的 onedir payload 解压到 `%LOCALAPPDATA%\DufsGui\payload\v1.6.13\`
+  （约 1 秒）；之后启动直接校验缓存并复用。缓存损坏会自动重解压，原因记在
+  `%LOCALAPPDATA%\DufsGui\shell.log`。
 - 首次运行创建 `%APPDATA%\DufsGui\config.json`，并把内置 dufs 释放到
   `%LOCALAPPDATA%\DufsGui\bin\dufs.exe`。
 - 主窗口默认勾选**第一块已连接网卡**（本机实测为以太网 `10.4.240.16`）；只有回环可用时才默认
   「仅本机 · 127.0.0.1」。选好共享目录后点「开启共享」，再点「打开网页」。
+- 主窗口每次按**最小可用尺寸 960×720** 打开（与拖到最小后的客户区同尺寸），不记忆上次窗口
+  大小/位置；该尺寸下底部按钮行、状态行与右侧日志栏完整可见。
 
 ## 主要能力
 
@@ -59,8 +63,8 @@
 
 ## 版本
 
-当前 **v1.6.4**。版本号唯一定义在 [`core/__init__.py`](core/__init__.py)，
-打包产物名（`dist\DufsGui-v1.6.4.exe`）与构建信息从它派生；GUI 窗口标题固定
+当前 **v1.6.13**。版本号唯一定义在 [`core/__init__.py`](core/__init__.py)，
+打包产物名（`dist\DufsGui-v1.6.13.exe`）与构建信息从它派生；GUI 窗口标题固定
 「Dufs GUI」，浏览器标签页标题在高级设置「网页外观」里配置。
 
 ## 构建可复现与产物校验
@@ -73,7 +77,7 @@
 - 同时生成 `dist\SHA256SUMS`（sha256sum 格式）：exe + 关键构建输入
   （`bin\dufs.exe`、`assets\`、`licenses\`、`requirements.txt`、spec、两份校验和清单）。
   除 exe 外的条目是**打进包内的输入**，用于审计来源，不单独分发。
-- 校验：`Get-FileHash dist\DufsGui-v1.6.4.exe -Algorithm SHA256`，
+- 校验：`Get-FileHash dist\DufsGui-v1.6.13.exe -Algorithm SHA256`，
   或在仓库根目录执行 `sha256sum -c dist/SHA256SUMS`。
 
 ## 测试

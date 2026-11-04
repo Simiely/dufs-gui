@@ -42,20 +42,26 @@ class ConfigMigrationTest(unittest.TestCase):
         self.assertEqual(cfg.profiles["p1"]["port"], 5001)
         # 类型不符 -> 回落默认 False，而不是把字符串 "no" 当布尔
         self.assertFalse(cfg.profiles["p1"]["allow_delete"])
-        self.assertEqual(cfg.recent_paths, ["C:\\data"])
         # 旧版的 dark_mode 字段已移除，载入时忽略且不再回写
         self.assertFalse(hasattr(cfg, "dark_mode"))
         self.assertEqual(cfg.current_config["port"], 4000)
+        # v1.6.12 移除「最近目录」：先备份再丢弃
+        backups = list(self.path.parent.glob("config.recent-backup-*.json"))
+        self.assertEqual(len(backups), 1, "旧历史必须先备份")
+        self.assertEqual(json.loads(backups[0].read_text(encoding="utf-8"))
+                         ["recent_paths"], ["C:\\data"])
+        self.assertIn("已备份", cfg.notice)
+        self.assertFalse(hasattr(cfg, "recent_paths"))
 
     def test_saved_config_contains_version_and_roundtrips(self):
         cfg = AppConfig(profiles={"p": {"port": 6000}}, current="p",
-                        recent_paths=["/a"],
                         current_config={"bind": "127.0.0.1"})
         save_config(cfg, self.path)
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         self.assertEqual(raw["config_version"], CONFIG_VERSION)
         self.assertNotIn("notice", raw)
         self.assertNotIn("dark_mode", raw, "固定深色后不再持久化主题状态")
+        self.assertNotIn("recent_paths", raw, "「最近目录」功能已删除")
         back = load_config(self.path)
         self.assertEqual(back.profiles["p"]["port"], 6000)
         self.assertEqual(back.notice, "")
@@ -90,10 +96,26 @@ class ConfigMigrationTest(unittest.TestCase):
         cfg = load_config(self.path)
         self.assertEqual(list(cfg.profiles), ["ok"])
         self.assertEqual(cfg.profiles["ok"]["port"], 6000)
-        self.assertEqual(cfg.recent_paths, ["a"])
         self.assertFalse(hasattr(cfg, "dark_mode"), "已删除的主题字段应被忽略")
         self.assertEqual(cfg.current_config, {})
         self.assertIn("类型无效", cfg.notice)
+
+    def test_recent_history_backed_up_once_then_dropped(self):
+        """已落盘的「最近目录」：备份一次、日志提示、下次保存即从配置消失。"""
+        self._write({"config_version": CONFIG_VERSION,
+                     "recent_paths": ["C:\\中文 目录", "D:\\另一个"]})
+        cfg = load_config(self.path)
+        backups = list(self.path.parent.glob("config.recent-backup-*.json"))
+        self.assertEqual(len(backups), 1)
+        data = json.loads(backups[0].read_text(encoding="utf-8"))
+        self.assertEqual(data["recent_paths"], ["C:\\中文 目录", "D:\\另一个"])
+        self.assertIn(str(self.path), data["source"])
+        self.assertIn("已备份", cfg.notice)
+        save_config(cfg, self.path)
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertNotIn("recent_paths", raw)
+        load_config(self.path)  # 已无历史：不得重复备份
+        self.assertEqual(len(list(self.path.parent.glob("config.recent-backup-*.json"))), 1)
 
     def test_save_is_atomic_and_keeps_old_file_on_failure(self):
         cfg = AppConfig(profiles={"p": {"port": 5000}})

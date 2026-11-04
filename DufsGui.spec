@@ -77,6 +77,14 @@ VS_VERSION = _version_info()
 DUFS_NAME = "dufs.exe" if IS_WIN else "dufs"
 DUFS = os.path.join(ROOT, "bin", DUFS_NAME)
 
+# 应用图标（多尺寸 ICO：16/24/32/48/64/256）：exe 的 PE 资源图标。
+# onefile 模式下 PyInstaller 的 bootloader 外壳也会带上这枚图标；
+# 本项目的分发外壳是 zig 编的裸 PE，由 _exp/build_release.py 写入同一文件。
+ICON = os.path.join(ROOT, "assets", "app.ico")
+if not os.path.isfile(ICON):
+    print(f"[spec] 警告：缺少 {ICON}，exe 将没有自定义图标")
+    ICON = None
+
 # 用 binaries 而不是 datas：PyInstaller 保证 binaries 保留可执行权限位
 binaries = []
 if os.path.isfile(DUFS):
@@ -183,6 +191,7 @@ if ONEDIR:
         strip=False,
         upx=False,
         version=VS_VERSION,
+        icon=ICON,
         console=DEBUG,
         disable_windowed_traceback=False,
     )
@@ -209,6 +218,7 @@ else:
         upx=False,          # 关掉 UPX：压缩壳容易被杀软误报
         runtime_tmpdir=None,
         version=VS_VERSION,
+        icon=ICON,
         console=DEBUG,      # 诊断版保留控制台，正式版隐藏
         disable_windowed_traceback=False,
         argv_emulation=False,
