@@ -809,8 +809,7 @@ class DufsGui(FormStateMixin, MainLayoutMixin, AdvancedDialogMixin, tk.Tk):
             self._log("服务未运行，请先开启共享")
             dialogs.show_info(self, "服务未运行", "请先开启共享，再打开网页。")
             return
-        url = running[0].url + "#" + str(int(time.time()))
-        webbrowser.open(url)
+        webbrowser.open(running[0].url)
 
     def _qr_urls(self) -> list[str]:
         """所有可访问地址：运行中用实际监听地址，未运行用配置地址。
