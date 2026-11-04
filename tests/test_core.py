@@ -292,6 +292,17 @@ class ConfigTest(unittest.TestCase):
         self.assertIsNone(bad)
         self.assertIn("结构已变化", msg)
 
+    def test_index_download_label_only_when_anchor_unique(self):
+        """顶栏下载文案补丁：锚点不唯一时跳过，避免误改文件页文案。"""
+        bad, msg = webtweak.patch_index_download_label("const x = 1;")
+        self.assertIsNone(bad)
+        self.assertIn("跳过", msg)
+        patched, _msg = webtweak.patch_index_download_label(
+            webtweak._INDEX_DOWNLOAD_LABEL_ANCHOR)
+        self.assertIsNotNone(patched)
+        self.assertIn('$dlText.textContent = "下载目录";', patched)
+        self.assertIn('$download.setAttribute("aria-label", "下载目录");', patched)
+
     def test_overlay_writes_copy_not_source(self):
         """覆盖只写到目标副本；皮肤源目录（fetch 产物）必须保持原样。"""
         with tempfile.TemporaryDirectory() as td:
@@ -354,7 +365,7 @@ class ConfigTest(unittest.TestCase):
             self.assertEqual(js.count('class="act-text"'), 7)
             # 顶栏按钮：桌面态文字 + 窄屏只留图标的样式
             for cls, label in [
-                ("download", "下载"), ("upload-file", "上传"),
+                ("download", "下载文件"), ("upload-file", "上传"),
                 ("move-file", "移动"), ("delete-file", "删除"),
                 ("new-folder", "新建文件夹"), ("new-file", "新建文件"),
             ]:
@@ -365,7 +376,13 @@ class ConfigTest(unittest.TestCase):
                 self.assertIn(f'class="{cls} hidden has-text"', html)
                 self.assertIn(f'aria-label="{label}"', html)
                 self.assertIn(f'<span class="act-text">{label}</span>', html)
-            self.assertEqual(html.count('aria-label="下载"'), 1)
+            self.assertEqual(html.count('aria-label="下载文件"'), 1)
+            self.assertEqual(html.count('aria-label="下载"'), 0)
+            # 索引页顶栏下载实际打包目录 → 文案/aria 改为「下载目录」，href 逻辑不变
+            self.assertIn('$download.title = "下载目录";', js)
+            self.assertIn('$dlText.textContent = "下载目录";', js)
+            self.assertIn('$download.setAttribute("aria-label", "下载目录");', js)
+            self.assertIn('$download.href = baseUrl() + "?zip";', js)
             self.assertIn(".toolbox .control.has-text,", css)
             self.assertIn(".toolbox-right .has-text", css)
             self.assertIn(".toolbox .control.has-text .act-text,", css)

@@ -435,7 +435,7 @@ _TOOLBAR_TEXT_PATCHES: tuple[tuple[str, str], ...] = (
     (
         '<a href="" class="control download hidden" title="下载文件" download="">',
         '<a href="" class="control download hidden has-text" title="下载文件" '
-        'download="" aria-label="下载"><span class="act-text">下载</span>',
+        'download="" aria-label="下载文件"><span class="act-text">下载文件</span>',
     ),
     # 左上：上传（点击热区是 <label>，文字放进 label 保证整块可点）
     (
@@ -495,6 +495,27 @@ def patch_toolbar_text(html: str) -> tuple[str | None, str]:
     return text, (f"顶栏按钮文字化：已应用（{len(_TOOLBAR_TEXT_PATCHES)} 处，"
                   "下载/上传/新建/移动/删除/登录/保存）")
 
+
+#: 索引页顶栏「下载」实际是打包整个目录（``?zip``），文案改成「下载目录」；
+#: 编辑 / 预览页顶栏下载当前文件，静态文案为「下载文件」。只改文案与
+#: aria-label / title，不动 ``$download.href`` 与点击逻辑。
+_INDEX_DOWNLOAD_LABEL_ANCHOR = '''    $download.title = "将文件夹打包为 .zip 下载";
+    $download.classList.add("dlwt");'''
+
+_INDEX_DOWNLOAD_LABEL_PATCHED = '''    $download.title = "下载目录";
+    $download.classList.add("dlwt");
+    const $dlText = $download.querySelector(".act-text");
+    if ($dlText) $dlText.textContent = "下载目录";
+    $download.setAttribute("aria-label", "下载目录");'''
+
+
+def patch_index_download_label(js: str) -> tuple[str | None, str]:
+    """索引页顶栏下载按钮文案改为「下载目录」；锚点不唯一时整体跳过。"""
+    if js.count(_INDEX_DOWNLOAD_LABEL_ANCHOR) != 1:
+        return None, "索引页下载按钮文案：锚点未唯一命中，跳过"
+    return (js.replace(_INDEX_DOWNLOAD_LABEL_ANCHOR,
+                       _INDEX_DOWNLOAD_LABEL_PATCHED, 1),
+            "索引页顶栏下载按钮文案：已改为「下载目录」")
 
 
 #: 在**已汉化**的 index.js 上拆出"重命名"，并把操作按钮改成图标 + 文字。
@@ -1319,6 +1340,10 @@ def prepare_overlay(source_dir: str, title: str, favicon_path: str,
             notes.append(msg)
             if actioned is not None:
                 text = actioned
+            dl_labeled, msg = patch_index_download_label(text)
+            notes.append(msg)
+            if dl_labeled is not None:
+                text = dl_labeled
             dialogs, msg = patch_native_dialogs(text)
             notes.append(msg)
             if dialogs is not None:
