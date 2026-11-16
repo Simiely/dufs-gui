@@ -47,7 +47,7 @@ LINK_SCHEMES = ("http://", "https://", "mailto:", "tel:", "javascript:", "data:"
 ADR_RE = re.compile(r"ADR-(\d{4})-[a-z0-9-]+\.md$")
 ID_RE = re.compile(r"^[a-z0-9]+(\.[a-z0-9-]+)+$")
 PITFALL_FIELDS = ("summary", "symptom", "cause", "detect", "avoid", "recover", "applies_to", "severity")
-SPEC_VERSION = "2.1.1"
+SPEC_VERSION = "2.1.2"
 
 
 # ---------------------------------------------------------------------------
@@ -471,13 +471,17 @@ def check_spec(root: Path, report: Report) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="repo-kit v2.5 不变量校验器")
+    ap = argparse.ArgumentParser(description="repo-kit v2.5.3 不变量校验器")
     ap.add_argument("--root", default=".", help="仓库根目录")
     ap.add_argument("--json", action="store_true", help="JSON 输出（等价于 --format json）")
     ap.add_argument("--format", choices=["text", "json", "sarif", "github"], default="text", help="输出格式")
     ap.add_argument("--baseline", default="", help="baseline JSON 文件")
     ap.add_argument("--write-baseline", default="", help="把当前问题写入 baseline JSON")
     ap.add_argument("--baseline-format", choices=["v1", "v2"], default="v1", help="写 baseline 的格式")
+    ap.add_argument(
+        "--prune-baseline", default="",
+        help="删除 baseline 中已不再命中的条目（规则收紧/静音后留下的死配置）",
+    )
     ap.add_argument("--changed-since", default="", help="只报告该 git ref 之后变更的文件")
     ap.add_argument("--changed-files", default="", help="newline 分隔的变更文件列表（用于 CI）")
     ap.add_argument("--allow-truth-only", action="store_true", help="允许真源单独变更（纯重构逃生口）")
@@ -960,6 +964,11 @@ def main() -> int:
     if args.changed_since and not changed:
         report.add("CHANGED_EMPTY", "WARN", ".", "没有检测到变更文件；--changed-since 可能不在 git 仓库中")
 
+    # 清理 baseline 必须按全量结果判断，否则会把「本次未变更」误判成「已不再命中」
+    if args.prune_baseline and changed:
+        print("BASELINE PRUNE: 忽略 --changed-since / --changed-files，按全量结果判断")
+        changed = set()
+
     # 同 PR co-change：真源变了，映射文档必须至少变一个
     if changed and not args.allow_truth_only:
         for profile, entries in sources_cfg.items():
@@ -989,6 +998,42 @@ def main() -> int:
 
     # 规范版本（始终检查，不受 changed-only 影响）
     check_spec(root, report)
+
+    # 清理 baseline：只保留仍然命中的条目。
+    # 规则收紧或静音（如 v2.5.0 的 LINK_DIR）后，旧条目会变成压制「已消失问题」的死配置；
+    # 留着它比没有更危险 —— 让人以为还有待办，也掩盖真正的新增项。
+    if args.prune_baseline:
+        path = Path(args.prune_baseline)
+        if not path.exists():
+            print(f"BASELINE PRUNE: 文件不存在 {path}")
+            return 2
+        data = json.loads(path.read_text(encoding="utf-8"))
+        old_version = int(data.get("version", 1))
+        old_items = data.get("items", [])
+        live_fp = {i["fingerprint"] for i in report.items if i["severity"] in ("ERROR", "WARN")}
+        live_key = {baseline_key(i) for i in report.items if i["severity"] in ("ERROR", "WARN")}
+        kept, dropped = [], []
+        for item in old_items:
+            hit = (
+                item.get("fingerprint") in live_fp
+                if old_version >= 2
+                else (item.get("code"), item.get("file"), item.get("message")) in live_key
+            )
+            if hit:
+                kept.append({
+                    "code": item.get("code"), "file": item.get("file"),
+                    "message": item.get("message"), "fingerprint": item.get("fingerprint"),
+                })
+            else:
+                dropped.append(item)
+        out = {"version": max(old_version, 2), "items": kept}
+        path.write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"BASELINE PRUNED: {path} (kept={len(kept)}, dropped={len(dropped)}, v{out['version']})")
+        for item in dropped[:20]:
+            print(f"  DROPPED {item.get('code')} {item.get('file')}")
+        if len(dropped) > 20:
+            print(f"  ... 另有 {len(dropped) - 20} 条")
+        return 0
 
     if args.write_baseline:
         version = 2 if args.baseline_format == "v2" else 1
