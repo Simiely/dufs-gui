@@ -22,6 +22,7 @@ related: []
 
 | 页面 | kind | status | owner | tier | source |
 |---|---|---|---|---|---|
+| [打包、产物校验与供应链](../打包与供应链.md) | standard | active | @simiely | normal | `build.bat` |
 | [使用指南：配置项、打包流程与排障的完整说明](../使用指南.md) | standard | active | @simiely | normal | `core/launch.py` |
 
 ### reference
@@ -53,6 +54,7 @@ related: []
 
 | id | 标题 | type | kind | status |
 |---|---|---|---|---|
+| `docs.build` | [打包、产物校验与供应链](../打包与供应链.md) | how-to | standard | active |
 | `docs.index` | [Dufs GUI 文档索引](../index.md) | reference | index | active |
 | `docs.usage` | [使用指南：配置项、打包流程与排障的完整说明](../使用指南.md) | how-to | standard | active |
 | `pitfall.assets-needs-index-html` | [dufs 因 --assets 目录缺 index.html 直接拒绝启动](../问题记录/问题：dufs因assets目录缺少index.html拒绝启动.md) | explanation | pitfall | resolved |
