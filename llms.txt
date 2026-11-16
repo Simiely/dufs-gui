@@ -1,0 +1,34 @@
+# dufs-gui
+
+> 文档索引与机器可读入口：内容契约、类型化关系、证据与新鲜度。
+> 生成文件，勿手改。
+
+## Core
+
+- [README](./README.md)
+- [文档索引](./docs/index.md)
+
+## By type
+
+### how-to
+
+- [使用指南：配置项、打包流程与排障的完整说明](./docs/使用指南.md) — 使用者视角的唯一权威：环境要求、打包、共享配置、排障与已知限制。
+
+### reference
+
+- [Dufs GUI 文档索引](./docs/index.md) — 人工导航：谁该读哪份、坑在哪、历史报告在哪。
+
+## Reports
+
+- [2026-11-16 文档审计：按单项目规范 2.1.1 迁移与 8 处内容纠偏](./docs/audits/2026-11-16-dufs-gui.md) — 记录迁移范围、机器层验收结果，以及人审发现的 8 处「文档与代码相反」及其处理。
+- [第 6 批改造报告：网页标题、站点图标、圆角与版本号](./docs/round-report.md) — 2026-11-03 一次性改造记录，结论已并入当前实现，仅作证据存档。
+- [启动实测：单文件外壳 + onedir 落地缓存的取舍依据](./docs/startup-benchmark-20261104.md) — 2026-11-04 实测 onefile 与方案 A 的启动耗时，支撑发布形态选择。
+
+## Pitfalls
+
+- [dufs 因 --assets 目录缺 index.html 直接拒绝启动](./docs/问题记录/问题：dufs因assets目录缺少index.html拒绝启动.md) — index.html 是 dufs 启动校验层的硬门槛，缺了 bail，而 css/js 缺失可以运行时回退。
+- [子进程继承 bootloader 的 DLL 搜索路径，外部 dufs.exe 起不来](./docs/问题记录/问题：子进程继承DLL搜索路径导致dufs无法启动.md) — PyInstaller 把库搜索路径指向 _MEIPASS，该设置会被 Popen 出来的子进程继承。
+- [弹窗写死尺寸，新增控件后底部被裁掉](./docs/问题记录/问题：弹窗内容超出固定尺寸被裁切.md) — 固定 geometry 撑不下新增行；withdraw 状态下 winfo_reqheight 返回 1，也不可用作依据。
+- [中文 .bat 存成 UTF-8 会被 cmd 逐行当命令执行](./docs/问题记录/问题：UTF-8编码的中文bat被cmd当成命令执行.md) — 中文 Windows 的 cmd 按代码页解码批处理，UTF-8 汉字解成乱码碎片后落在命令名位置。
+- [spec 文件里没有 OS 全局变量，写了就 NameError 中断打包](./docs/问题记录/问题：spec文件里OS变量未定义导致打包中断.md) — spec 由 exec 执行，PyInstaller 只注入少数全局名，判断系统必须自己 import os。
+- [ttk 下拉弹层与勾选框的配色不吃 ttk.Style](./docs/问题记录/问题：ttk下拉列表与复选框在深色下不可见.md) — 下拉是原生 tk.Listbox，clam 的对勾是硬编码深色，两条都不能用 ttk 主题改。

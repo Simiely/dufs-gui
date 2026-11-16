@@ -1,0 +1,17 @@
+{
+  "_comment": "只做 co_change（版本联动），不做标识符抽取：本仓文档 inline code 密集，抽取模式会误伤全篇。",
+  "code": [
+    {
+      "truth": "core/__init__.py",
+      "patterns": [],
+      "docs": [],
+      "co_change": true,
+      "co_change_docs": [
+        "README.md",
+        "AGENTS.md",
+        "docs/使用指南.md"
+      ]
+    }
+  ],
+  "knowledge": []
+}

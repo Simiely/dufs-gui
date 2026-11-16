@@ -3,6 +3,29 @@
 本项目版本格式：`主版本.次版本.修订`，按版本倒序分节。
 版本号唯一定义在 [`core/__init__.py`](core/__init__.py) 的 `APP_VERSION`，界面标题与打包产物名均从它派生，不要在多处改。
 
+## [Unreleased] - 2026-11-16
+
+### 文档：按单项目规范 2.1.1 完成迁移
+
+只动文档与校验配置，**不改任何产品代码**。应用版本仍是 1.6.15。
+
+- 接入机器层：`tools/repo-kit/{check_repo,generate}.py`、`schema/`（taxonomy / sources /
+  frontmatter schema / kit.lock）、`.github/workflows/repo-check.yml`。
+- `AGENTS.md` 改为由 [`schema/agents.template.md`](schema/agents.template.md) 生成，14 条关键坑保留在模板里；
+  文档基线行随之迁移。新增 `llms.txt` 与 `docs/_generated/{index,backlinks,pitfalls}.md`。
+- 9 个文件补 frontmatter（使用指南、2 篇报告 → `kind: report` + `archived`、6 篇坑页 → `kind: pitfall`）。
+- 新增 [`docs/index.md`](docs/index.md) 人工导航与 [`docs/audits/2026-11-16-dufs-gui.md`](docs/audits/2026-11-16-dufs-gui.md) 审计记录。
+- `sources.json` 只配 `co_change`：改 `core/__init__.py` 的 `APP_VERSION` 时，README / AGENTS / 使用指南
+  必须同 PR 更新。
+- **纠正 8 处文档与代码相反**的表述，其中影响使用的两条：
+  - 「双击 exe 即外壳形态」——`build.bat` 实际产出普通 onefile，外壳形态由未入库的
+    `_exp/build_release.py` 产出，现已明确标注不可从本仓库复现；
+  - 网页皮肤坑页的结论由「三件套全部自研、默认关闭」更正为「官方 assets + CSS 覆盖、默认开启」。
+  其余 6 条见审计记录。
+
+验收：`REPO CHECK: PASS`（ERROR=0, WARN=0, pages=11）、`GENERATE CHECK: PASS`、
+`KIT LOCK: PASS`（v2.5.1, spec=2.1.1）。
+
 ## [1.6.15] - 2026-11-04
 
 ### 「打开网页」不再追加时间戳 fragment

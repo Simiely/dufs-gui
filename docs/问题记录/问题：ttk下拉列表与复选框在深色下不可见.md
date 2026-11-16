@@ -1,3 +1,24 @@
+---
+id: pitfall.ttk-dark-widgets
+title: ttk 下拉弹层与勾选框的配色不吃 ttk.Style
+summary: 下拉是原生 tk.Listbox，clam 的对勾是硬编码深色，两条都不能用 ttk 主题改。
+type: explanation
+kind: pitfall
+status: resolved
+owner: "@simiely"
+topics: [development]
+source_type: code
+source: core/theme.py
+last_reviewed: 2026-11-04
+symptom: 深色界面下下拉箭头看不见、勾选态分辨不出；改 ttk.Style 毫无反应且不报错。
+cause: Combobox 的弹层是原生 tk.Listbox，不受 ttk 主题管；clam 主题的对勾颜色写死，indicatorcolor 在部分版本静默失效。
+detect: 目视下拉弹层与勾选态；若改完样式无任何变化，即命中此类。
+avoid: 下拉用 option database（键名大小写敏感）并在初始化时 tk.eval 刷已存在列表；勾选改用 tk.Checkbutton + indicatoron=False + 自绘图片。
+recover: 按上述替换控件；不要在 ttk.Style 上继续加配置。
+applies_to: [docs.usage]
+severity: medium
+related: []
+---
 # 问题：ttk 下拉列表与复选框在深色主题下看不清
 
 **TL;DR**：下拉列表不是 ttk 控件、复选框对勾是硬编码深色，两者的配色都不能用 `ttk.Style` 改。

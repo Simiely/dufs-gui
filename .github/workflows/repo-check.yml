@@ -1,0 +1,45 @@
+name: repo-check
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'schema/**'
+      - 'tools/**'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'DEVELOPMENT.md'
+      - 'CHANGELOG.md'
+      - 'llms.txt'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # --changed-since 需要基分支历史。默认浅克隆会让变更集退化成空集，
+          # 同 PR co-change 检查会静默失效（v2.4.0 及更早的模板就是这样）。
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Doc dependencies
+        # 文档检查的依赖与仓库自身 requirements.txt（运行/构建）解耦：
+        # 代码仓库的 requirements.txt 往往只有打包工具，按它装会缺这三个包。
+        run: python -m pip install "PyYAML>=6.0" "markdown-it-py>=3.0" "jsonschema>=4.20"
+      - name: Invariants
+        run: python tools/repo-kit/check_repo.py --root .
+      - name: Truth co-change (真源改了，文档必须同 PR)
+        if: github.event_name == 'pull_request'
+        run: python tools/repo-kit/check_repo.py --root . --changed-since "origin/${{ github.base_ref }}"
+      - name: Generated artifacts are up to date
+        run: python tools/repo-kit/generate.py --root . --check
+      - name: Kit lock
+        run: pwsh tools/update-repo-kit.ps1 -Check

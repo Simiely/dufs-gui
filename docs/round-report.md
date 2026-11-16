@@ -1,3 +1,17 @@
+---
+id: report.round6
+title: 第 6 批改造报告：网页标题、站点图标、圆角与版本号
+summary: 2026-11-03 一次性改造记录，结论已并入当前实现，仅作证据存档。
+type: explanation
+kind: report
+status: archived
+owner: "@simiely"
+topics: [development]
+source_type: doc
+source: CHANGELOG.md
+last_reviewed: 2026-11-03
+related: []
+---
 # 第 6 批改造报告（v1.5.0 → v1.6.0）
 
 日期：2026-11-03 · 分支 `fix/p0-hardening` · 基线提交 `9d6b23b`

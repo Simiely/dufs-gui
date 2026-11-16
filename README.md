@@ -18,7 +18,9 @@
 
 ## 快速开始
 
-**已有构建产物**：双击 `dist\DufsGui-v1.6.15.exe` 即可（单文件外壳；首次启动解压到本地缓存，之后复用）。
+**已有构建产物**：双击 `dist\DufsGui-v<版本>.exe` 即可。注意两种形态：`build.bat` 产出的是
+**普通 onefile**（每次启动解压到 `%TEMP%\_MEI*`，1–3 秒）；发布用的「单文件外壳 + onedir 缓存」
+由仓库外的 `_exp/build_release.py` 产出，**无法从本仓库复现**，下文缓存行为只对那种包成立。
 
 **从源码构建**：双击 `build.bat`，它自动完成「取 dufs → 打包 → `--selftest` → 生成校验和」。
 只有缺 PyInstaller 时会停下并打印一行可复制的安装命令
@@ -31,7 +33,10 @@
 
 ### 首次启动预期
 
-- 首次启动会把内置的 onedir payload 解压到 `%LOCALAPPDATA%\DufsGui\payload\v1.6.15\`
+> 本节描述**发布包**（外壳形态）。用 `build.bat` 自行构建得到的是普通 onefile，
+> 没有 payload 缓存，每次启动都解压到 `%TEMP%\_MEI*`。
+
+- 发布包首次启动会把内置的 onedir payload 解压到 `%LOCALAPPDATA%\DufsGui\payload\v<版本>\`
   （约 1 秒）；之后启动直接校验缓存并复用。缓存损坏会自动重解压，原因记在
   `%LOCALAPPDATA%\DufsGui\shell.log`。
 - 首次运行创建 `%APPDATA%\DufsGui\config.json`，并把内置 dufs 释放到
@@ -64,7 +69,7 @@
 ## 版本
 
 当前 **v1.6.15**。版本号唯一定义在 [`core/__init__.py`](core/__init__.py)，
-打包产物名（`dist\DufsGui-v1.6.15.exe`）与构建信息从它派生；GUI 窗口标题固定
+打包产物名（`dist\DufsGui-v<版本>.exe`）与构建信息从它派生；GUI 窗口标题固定
 「Dufs GUI」，浏览器标签页标题在高级设置「网页外观」里配置。
 
 ## 构建可复现与产物校验
@@ -77,7 +82,7 @@
 - 同时生成 `dist\SHA256SUMS`（sha256sum 格式）：exe + 关键构建输入
   （`bin\dufs.exe`、`assets\`、`licenses\`、`requirements.txt`、spec、两份校验和清单）。
   除 exe 外的条目是**打进包内的输入**，用于审计来源，不单独分发。
-- 校验：`Get-FileHash dist\DufsGui-v1.6.15.exe -Algorithm SHA256`，
+- 校验：`Get-FileHash dist\DufsGui-v<版本>.exe -Algorithm SHA256`，
   或在仓库根目录执行 `sha256sum -c dist/SHA256SUMS`。
 
 ## 测试
@@ -111,7 +116,7 @@ onefile → `--selftest` → 断言产物非空并校验 SHA256SUMS。runner 没
 |---|---|
 | SmartScreen 拦截"未知发布者" | exe 未签名且下载量少；点「更多信息 → 仍要运行」，或从源码自行构建 |
 | 杀毒软件报毒 / 隔离 | onefile 会往 `%TEMP%` 释放可执行文件并拉起 dufs，行为本身可疑；加白名单，或改 `DUFS_GUI_MODE=onedir` 打包（误报显著更低） |
-| 启动要 1–3 秒 | onefile 每次启动都解压到 `%TEMP%\_MEI*`；onedir 明显更快 |
+| 启动要 1–3 秒 | 这是 `build.bat` 产出的 onefile 的正常开销（每次解压到 `%TEMP%\_MEI*`）；改为 `DUFS_GUI_MODE=onedir` 或使用发布包外壳形态可显著加快 |
 | 端口被占用 | 界面会提示并推荐空闲端口；也可 `netstat -ano \| findstr :5000` 查占用进程 |
 | 多网卡只有部分启动成功 | 状态栏汇总「N 个中 M 个已启动 · K 个失败」，展开「失败详情」查看失败地址与原因（常见是某个 IP 上端口被占）；其他地址照常可用 |
 | 双击闪退、无报错 | 先跑 `build_debug.bat`（控制台 + 抓输出），或读 `%LOCALAPPDATA%\DufsGui\crash.log` |

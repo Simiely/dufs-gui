@@ -1,3 +1,17 @@
+---
+id: report.startup-benchmark
+title: 启动实测：单文件外壳 + onedir 落地缓存的取舍依据
+summary: 2026-11-04 实测 onefile 与方案 A 的启动耗时，支撑发布形态选择。
+type: explanation
+kind: report
+status: archived
+owner: "@simiely"
+topics: [development]
+source_type: doc
+source: CHANGELOG.md
+last_reviewed: 2026-11-04
+related: []
+---
 # 方案 A 原型实测：单文件外壳 + onedir 落地缓存
 
 测量日期 2026-11-04，同一台机器、同一时段（10:05–10:55），市电供电（台式机无电池），Defender 未安装（详见 §1）。未改动 `dist\DufsGui-v1.6.4.exe`、`DufsGui.spec`、`build.bat`；原型全部在 `_exp\`。
