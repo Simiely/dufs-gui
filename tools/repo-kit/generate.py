@@ -397,7 +397,7 @@ def build_backlinks(pages: dict[str, dict], tax: dict) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="repo-kit v2.5.1 生成器")
+    ap = argparse.ArgumentParser(description="repo-kit v2.5.2 生成器")
     ap.add_argument("--root", default=".")
     ap.add_argument("--write", action="store_true", help="写入生成文件")
     ap.add_argument("--check", action="store_true", help="只检查生成文件是否最新")
@@ -423,9 +423,13 @@ def main() -> int:
         "docs/_generated/pitfalls.md": build_pitfall_index(pages, tool_rel),
     }
     # 只生成 taxonomy 声明过的文件：AGENTS.md 由仓库自行决定是生成还是手写
-    # （REPO_STANDARD 1.1/4）。未声明时按全部生成，兼容 v2.5.0 及更早的仓库。
-    declared = set(tax.get("generated_files") or [])
-    outputs = {rel: text for rel, text in candidates.items() if not declared or rel in declared}
+    # （REPO_STANDARD 1.1/4）。
+    # 语义按「键是否存在」区分，不能把空列表也当成「没声明」：
+    #   缺键      -> 旧行为，全部生成（兼容 v2.5.0 及更早的仓库）
+    #   显式 []   -> 一个都不生成（link-only 这类「有手写 AGENTS、不要生成物」的仓库）
+    raw_declared = tax.get("generated_files")
+    declared = None if raw_declared is None else set(raw_declared)
+    outputs = {rel: text for rel, text in candidates.items() if declared is None or rel in declared}
     skipped = [rel for rel in candidates if rel not in outputs]
     problems = []
     for rel, content in outputs.items():
