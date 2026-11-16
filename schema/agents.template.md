@@ -1,6 +1,6 @@
 # AGENTS.md · dufs-gui 项目规则
 
-> 📌 **文档基线**：2026-11-16（`PENDING`）—— 按单项目规范 2.1.1 完成迁移（四件套 + 机器层）
+> 📌 **文档基线**：2026-11-16（`bd399e3`）—— 按单项目规范 2.1.1 完成迁移（四件套 + 机器层）
 > 更新文档/代码后请更新此行（日期 + 新 commit hash），并在 CHANGELOG 追加版本
 >
 > 本文件由 `tools/repo-kit/generate.py` 从 [`schema/agents.template.md`](schema/agents.template.md)
