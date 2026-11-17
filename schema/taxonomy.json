@@ -1,5 +1,5 @@
 {
-  "version": "2.5.3",
+  "version": "2.7.0",
   "name": "dufs-gui",
   "include": [
     "README.md",
@@ -8,15 +8,15 @@
     "CHANGELOG.md",
     "docs/**"
   ],
-  "context_files": [
-    "AGENTS.md"
-  ],
-  "exempt_basenames": [
-    "README.md",
-    "CHANGELOG.md"
-  ],
-  "slugger": "github",
-  "summary_policy": "warn",
+  "frontmatter_exempt": {
+    "names": [
+      "AGENTS.md",
+      "CHANGELOG.md",
+      "DEVELOPMENT.md",
+      "README.md"
+    ],
+    "paths": []
+  },
   "types": [
     "tutorial",
     "how-to",
@@ -88,10 +88,6 @@
     "normal": 365,
     "critical": 90
   },
-  "entry_files": [
-    "README.md",
-    "DEVELOPMENT.md"
-  ],
   "generated_files": [
     "AGENTS.md",
     "llms.txt",
